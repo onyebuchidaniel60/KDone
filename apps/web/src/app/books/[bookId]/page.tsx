@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { bookProjects } from "@kdone/db/schema";
 import { getDb } from "@/lib/db";
 import { requireUser } from "@/lib/session";
@@ -27,10 +27,14 @@ export default async function BookWorkspacePage({
   if (!user) redirect("/login");
 
   const db = getDb();
-  // Ownership check in the query itself: a book owned by someone else is not found.
-  const book = await db.query.bookProjects.findFirst({
-    where: (projects, { eq: eqFn, and }) => and(eqFn(projects.id, bookId), eqFn(projects.userId, user.id)),
-  });
+  // Ownership check in the query itself: a book owned by someone else is not
+  // found. Uses an explicit select; the relational API needs relations().
+  const rows = await db
+    .select()
+    .from(bookProjects)
+    .where(and(eq(bookProjects.id, bookId), eq(bookProjects.userId, user.id)))
+    .limit(1);
+  const book = rows[0];
 
   if (!book) notFound();
 

@@ -422,7 +422,7 @@ export class KDone {
 
   /** Builds the artifact snapshot an approval binds to (ADR-013). */
   async buildApprovalSnapshot(bookId: string) {
-    const book = await this.db.query.bookProjects.findFirst({ where: (t, { eq: e }) => e(t.id, bookId) });
+    const book = await this.loadBook(bookId);
     if (!book) throw errors.bookNotFound(bookId);
     if (!book.currentManuscriptId) throw errors.precondition("No current manuscript");
     if (!book.currentMetadataId) throw errors.precondition("No current metadata");
@@ -643,7 +643,7 @@ export class KDone {
 
     this.worker.handle("research", async (job) => {
       const bookId = job.id && (await this.bookIdForJob(job.id))!;
-      const book = await this.db.query.bookProjects.findFirst({ where: (t, { eq: e }) => e(t.id, bookId) });
+      const book = await this.loadBook(bookId);
       const ctx = this.ctx(book!, bookId);
       const research = await researchAgent(this.researchProvider, this.llm, ctx);
       await this.persistResearch(bookId, book!.userId, research.output);
@@ -657,7 +657,7 @@ export class KDone {
 
     this.worker.handle("planning", async (job) => {
       const bookId = (await this.bookIdForJob(job.id))!;
-      const book = await this.db.query.bookProjects.findFirst({ where: (t, { eq: e }) => e(t.id, bookId) });
+      const book = await this.loadBook(bookId);
       const ctx = this.ctx(book!, bookId);
       const research = await this.loadResearchOutput(bookId);
       const plan = await planningAgent(this.llm, ctx, research, book!.desiredLength ?? 30_000);
@@ -673,7 +673,7 @@ export class KDone {
     this.worker.handle("writing", async (job) => {
       const bookId = (await this.bookIdForJob(job.id))!;
       const ordinal = Number((job.payload as { chapterOrdinal?: number }).chapterOrdinal ?? 1);
-      const book = await this.db.query.bookProjects.findFirst({ where: (t, { eq: e }) => e(t.id, bookId) });
+      const book = await this.loadBook(bookId);
       const ctx = this.ctx(book!, bookId);
       const [chapter] = await this.db
         .select().from(chapters)
@@ -702,7 +702,7 @@ export class KDone {
 
     this.worker.handle("qa", async (job) => {
       const bookId = (await this.bookIdForJob(job.id))!;
-      const book = await this.db.query.bookProjects.findFirst({ where: (t, { eq: e }) => e(t.id, bookId) });
+      const book = await this.loadBook(bookId);
       const ctx = this.ctx(book!, bookId);
       const research = await this.loadResearchOutput(bookId);
       const chapterRows = await this.loadDraftChapters(bookId);
@@ -753,7 +753,7 @@ export class KDone {
 
     this.worker.handle("cover", async (job) => {
       const bookId = (await this.bookIdForJob(job.id))!;
-      const book = await this.db.query.bookProjects.findFirst({ where: (t, { eq: e }) => e(t.id, bookId) });
+      const book = await this.loadBook(bookId);
       const ctx = this.ctx(book!, bookId);
       const plan = await this.loadPlanOutput(bookId);
       const result = await coverAgent(this.imageProvider, this.llm, ctx, plan);
@@ -763,7 +763,7 @@ export class KDone {
 
     this.worker.handle("metadata", async (job) => {
       const bookId = (await this.bookIdForJob(job.id))!;
-      const book = await this.db.query.bookProjects.findFirst({ where: (t, { eq: e }) => e(t.id, bookId) });
+      const book = await this.loadBook(bookId);
       const ctx = this.ctx(book!, bookId);
       const plan = await this.loadPlanOutput(bookId);
       const result = await metadataAgent(this.llm, ctx, plan, await this.collectDisclosures(bookId));
@@ -778,7 +778,7 @@ export class KDone {
 
     this.worker.handle("epub", async (job) => {
       const bookId = (await this.bookIdForJob(job.id))!;
-      const book = await this.db.query.bookProjects.findFirst({ where: (t, { eq: e }) => e(t.id, bookId) });
+      const book = await this.loadBook(bookId);
       const bookIdUnsafe = bookId;
       if (!book!.currentManuscriptId) throw new Error("no current manuscript");
       const [manuscript] = await this.db.select().from(manuscripts).where(eq(manuscripts.id, book!.currentManuscriptId!)).limit(1);
@@ -806,6 +806,22 @@ export class KDone {
   }
 
   /* ------------------------------------------------------------ Helpers */
+
+  /**
+   * Loads a book row with an explicit select.
+   *
+   * The Drizzle relational query API (`db.query.*`) requires `relations()`
+   * definitions and stalls against PGlite without them, so all lookups use the
+   * explicit select form.
+   */
+  private async loadBook(bookId: string) {
+    const rows = await this.db
+      .select()
+      .from(bookProjects)
+      .where(eq(bookProjects.id, bookId))
+      .limit(1);
+    return rows[0];
+  }
 
   private async bookIdForJob(jobId: string): Promise<string | null> {
     const [job] = await this.db.select().from(generationJobs).where(eq(generationJobs.id, jobId));
@@ -844,7 +860,7 @@ export class KDone {
   }
 
   private async loadPlanOutput(bookId: string): Promise<PlanOutput> {
-    const book = await this.db.query.bookProjects.findFirst({ where: (t, { eq: e }) => e(t.id, bookId) });
+    const book = await this.loadBook(bookId);
     if (!book?.currentPlanId) throw errors.precondition("No approved plan");
     const [plan] = await this.db.select().from(bookPlans).where(eq(bookPlans.id, book.currentPlanId)).limit(1);
     if (!plan) throw errors.precondition("No approved plan");
@@ -871,23 +887,32 @@ export class KDone {
       })
       .returning();
 
-    const sourceIds: string[] = [];
-    for (const source of output.sources) {
-      const [row] = await this.db
-        .insert(researchSources)
-        .values({
-          researchProjectId: project!.id, url: source.url, title: source.title,
-          sourceName: source.sourceName, sourceType: source.sourceType, status: source.status,
-        })
-        .returning();
-      sourceIds.push(row!.id);
-    }
-    for (const finding of output.findings) {
-      await this.db.insert(researchFindings).values({
-        researchProjectId: project!.id,
-        sourceId: finding.sourceIndex === null ? null : sourceIds[finding.sourceIndex] ?? null,
-        findingType: finding.findingType, statement: finding.statement, confidence: finding.confidence,
-      });
+    const sourceRows = await this.db
+      .insert(researchSources)
+      .values(
+        output.sources.map((source) => ({
+          researchProjectId: project!.id,
+          url: source.url,
+          title: source.title,
+          sourceName: source.sourceName,
+          sourceType: source.sourceType,
+          status: source.status,
+        })),
+      )
+      .returning();
+    const sourceIds = sourceRows.map((row) => row.id);
+
+    if (output.findings.length > 0) {
+      await this.db.insert(researchFindings).values(
+        output.findings.map((finding) => ({
+          researchProjectId: project!.id,
+          sourceId:
+            finding.sourceIndex === null ? null : sourceIds[finding.sourceIndex] ?? null,
+          findingType: finding.findingType,
+          statement: finding.statement,
+          confidence: finding.confidence,
+        })),
+      );
     }
     await this.db.update(bookProjects).set({ currentResearchProjectId: project!.id, updatedAt: new Date() }).where(eq(bookProjects.id, bookId));
     void userId;
@@ -974,7 +999,7 @@ export class KDone {
     const expected = await this.chapterCount(bookProjectId);
     if (rows.length < expected) return null;
 
-    const book = await this.db.query.bookProjects.findFirst({ where: (t, { eq: e }) => e(t.id, bookProjectId) });
+    const book = await this.loadBook(bookProjectId);
     const version = (await this.db.select().from(manuscripts).where(eq(manuscripts.bookProjectId, bookProjectId))).length + 1;
 
     const assembled = assembleManuscript({

@@ -90,11 +90,20 @@ export function route(handler: Handler) {
   };
 }
 
-/** In V1 the authenticated user comes from the session. */
+/**
+ * Identity for V1.
+ *
+ * SECURITY: `x-kdone-user-id` is a test/dev harness only. It is hard-disabled
+ * when NODE_ENV === "production" so a deployed instance can never accept a
+ * forged header as identity. When enabled it MUST be replaced by the real
+ * Auth.js session before V1 ships (see docs/AI_HANDOFF.md).
+ */
 async function currentUserId(request: NextRequest): Promise<string> {
-  const header = request.headers.get("x-kdone-user-id");
-  if (!header) throw errors.unauthenticated();
-  return header;
+  if (process.env.NODE_ENV !== "production") {
+    const header = request.headers.get("x-kdone-user-id");
+    if (header) return header;
+  }
+  throw errors.unauthenticated("No authenticated session");
 }
 
 const j = (data: unknown, status = 200) => Response.json(data, { status });
