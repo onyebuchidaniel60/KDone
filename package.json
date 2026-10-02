@@ -18,14 +18,22 @@
     "compose:down": "docker compose down"
   },
   "devDependencies": {
+    "@kdone/agents": "workspace:*",
+    "@kdone/ai": "workspace:*",
+    "@kdone/db": "workspace:*",
+    "@kdone/epub": "workspace:*",
+    "@kdone/jobs": "workspace:*",
+    "@kdone/publishing": "workspace:*",
+    "@kdone/shared": "workspace:*",
+    "@kdone/storage": "workspace:*",
+    "@kdone/validation": "workspace:*",
     "@types/node": "^22.10.2",
+    "drizzle-orm": "^0.38.3",
     "turbo": "^2.3.3",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   },
   "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }

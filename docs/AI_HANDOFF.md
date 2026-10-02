@@ -1,66 +1,105 @@
 # KDone — AI Handoff
 
-## Purpose
-
-This document is the current-state handoff for OpenCode and future coding sessions. It should describe **where the implementation actually is**, not re-state the product requirements.
-
 ## Current phase
 
-**Planning / source-of-truth preparation**
+**Phase K (hardening) — INCOMPLETE.** Phases A–E are complete and verified.
+Phases F–K have been implemented but the E2E smoke test is **failing at step 2**
+(research). V1 is **not** complete.
 
-## Current product state
+## Definition of Done status
 
-- Product name: KDone
-- PRD defined: yes
-- One-shot V1 strategy: yes
-- Implementation plan defined: yes
-- OpenCode-native project instructions: yes
-- KDP external source registry: yes
-- Codebase implementation: not started in this handoff package
+| Criterion | Status |
+|---|---|
+| Lifecycle Create → KDP prepare | **Not verified** (E2E fails at research step) |
+| Jobs survive worker restart | **Verified** (`packages/jobs` tests) |
+| Artifacts versioned, no destructive overwrite | **Verified** (unit tests + schema) |
+| Provenance on every generated output | **Implemented**, partially verified |
+| Every state transition logged | **Verified** (unit test) |
+| Critical issues block READY_FOR_REVIEW | **Verified** (unit test + preflight code) |
+| publish/start rejects artifact drift | **Implemented, NOT verified through HTTP** |
+| Mock providers run everything locally | **Verified** |
 
-## Agreed development model
+## What is built
 
-Build one end-to-end V1, run a real book through it, capture real failures, then iterate based on a prioritized backlog.
+- **Packages**: `shared` (state machine, errors, provenance fingerprint/drift),
+  `db` (24 entities, 41 FKs, migrations, PGlite harness), `jobs` (Queue interface,
+  BullMQQueue, InMemoryQueue, JobStore, Orchestrator, Worker),
+  `validation` (Zod contracts), `ai` (LLM/Research/Image providers + mocks),
+  `storage` (StorageProvider + Mock), `agents` (research/planning/writing/
+  editorial/fact-check/consistency/metadata/cover/production/preflight),
+  `epub` (deterministic EPUB 3 builder + validator), `publishing`
+  (PublishingProvider + KDPProvider Mode A).
+- **apps/web**: Next.js 15, Auth.js (NextAuth v5) + Drizzle adapter,
+  `/`, `/login`, `/dashboard`, `/settings`, `/books/[bookId]` workspace nav,
+  21 API routes, `lifecycle.ts` domain services.
+- **apps/worker**: BullMQ worker entrypoint with stale-job recovery.
+- **docs**: ADR-011..020 applied to DATA_MODEL/API/ARCHITECTURE/IMPLEMENTATION_PLAN.
 
-## Current implementation target
+## What is mocked vs real
 
-The first implementation should cover:
+| Area | State |
+|---|---|
+| Database | Real Postgres schema/migrations. Dev needs Postgres; tests use PGlite. |
+| LLM / research / image | **Mocked.** Deterministic, schema-valid, seed-based. |
+| Storage | **Mocked** in-memory. No S3/MinIO client yet. |
+| Queue | **Real BullMQ in prod**; in-memory in tests. |
+| Auth | Credentials + JWT for local dev. OAuth not configured. |
+| KDP submission | **Not implemented by design.** Mode A prepare only. |
+| EPUB | Real deterministic builder + structural validator. |
 
-`Create → Research → Approve → Plan → Approve → Write → Edit → QA → Cover → Metadata → EPUB → Preview → Approve → KDP prepare`
+## Known blocking issue
 
-## Known external dependency
+`e2e/lifecycle.e2e.test.ts` hangs inside the research job handler: the
+`generation_jobs` row stays `RUNNING` with `attempts=1` and never completes.
+Most likely the Drizzle relational query API (`db.query.bookProjects.findFirst`)
+in `apps/web/src/server/lifecycle.ts` — no `relations()` are defined in the
+schema, and PGlite appears to stall on it. Every handler in `registerHandlers()`
+uses this pattern, so fixing it should unblock the whole E2E. Replace those calls
+with explicit `select().from(...).where(...)`.
 
-KDP is the external publishing system. The core app must not assume a public, general-purpose KDP book-publishing API. KDP preparation is a guaranteed V1 capability; actual submission automation is an adapter that must be validated before activation.
+Also: `apps/web` uses `x-kdone-user-id` as a temporary auth stand-in in
+`src/server/routes.ts`; this must be replaced by the real Auth.js session
+before V1 is shippable.
 
-## Current blockers
+## How to run locally
 
-None at the documentation stage.
+Docker is not required to be installed; use managed services.
 
-## First implementation tasks
+```bash
+# 1. Managed Postgres (e.g. Neon) and Redis (e.g. Upstash) - set URLs below.
+#    Local docker also works: docker compose up -d
 
-1. Scaffold repository and application.
-2. Implement database/domain model.
-3. Implement authentication and ownership.
-4. Implement book dashboard/workspace.
-5. Implement durable jobs and provider interfaces.
-6. Implement research/planning/writing workflow.
-7. Implement editorial/QA.
-8. Implement production/metadata/provenance.
-9. Implement preview and approval.
-10. Implement KDP preparation boundary.
-11. Run full E2E test.
-12. Run one real book and create the iteration backlog.
+pnpm install
+pnpm --filter @kdone/db migrate        # requires DATABASE_URL
 
-## Iteration log
+# Web (apps/web on :3000)
+DATABASE_URL=... AUTH_SECRET=dev-secret AUTH_DEV_LOGIN=true REDIS_URL=... \
+  pnpm --filter web dev
 
-Add entries here after each meaningful iteration:
-
-```text
-### Iteration YYYY-MM-DD
-Goal:
-Observed problems:
-Fixes shipped:
-Regression tests added:
-Known remaining issues:
-Next priority:
+# Worker (separate process, ADR-016)
+DATABASE_URL=... REDIS_URL=... pnpm --filter worker dev
 ```
+
+Without Redis the worker falls back to `InMemoryQueue` (jobs then only run
+in-process).
+
+## How to run tests
+
+```bash
+pnpm test         # 28 unit/integration tests, PGlite only, no services needed
+pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
+```
+
+## Decisions taken without asking
+
+1. **Auth without an adapter at build time** — Auth.js reads the adapter during
+   `next build`, and it detects the drizzle flavour from the instance, so a lazy
+   `Proxy` silently broke it. The Drizzle adapter is attached only when
+   `DATABASE_URL` is set. V1 uses Credentials + JWT.
+2. **`AnyDb` type alias** — production (`postgres-js`) and tests (PGlite) share
+   one code path; `PgDatabase<never, ...>` was wrong (nothing is assignable to
+   `never`).
+3. **Durability lives in `generation_jobs`, not the queue** — a queue is only a
+   delivery mechanism, so worker recovery re-queues abandoned `RUNNING` jobs.
+4. **Rate limiting not implemented** — deferred; needs a real store decision.
+5. **`User` id is `text`** to match Auth.js; all `user_id` columns are `text`.

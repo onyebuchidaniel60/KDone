@@ -8,9 +8,39 @@ importers:
 
   .:
     devDependencies:
+      '@kdone/agents':
+        specifier: workspace:*
+        version: link:packages/agents
+      '@kdone/ai':
+        specifier: workspace:*
+        version: link:packages/ai
+      '@kdone/db':
+        specifier: workspace:*
+        version: link:packages/db
+      '@kdone/epub':
+        specifier: workspace:*
+        version: link:packages/epub
+      '@kdone/jobs':
+        specifier: workspace:*
+        version: link:packages/jobs
+      '@kdone/publishing':
+        specifier: workspace:*
+        version: link:packages/publishing
+      '@kdone/shared':
+        specifier: workspace:*
+        version: link:packages/shared
+      '@kdone/storage':
+        specifier: workspace:*
+        version: link:packages/storage
+      '@kdone/validation':
+        specifier: workspace:*
+        version: link:packages/validation
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.5
+      drizzle-orm:
+        specifier: ^0.38.3
+        version: 0.38.4(@electric-sql/pglite@0.2.17)(@types/react@19.3.0)(postgres@3.4.9)(react@19.3.0)
       turbo:
         specifier: ^2.3.3
         version: 2.11.6
@@ -26,12 +56,33 @@ importers:
       '@auth/drizzle-adapter':
         specifier: ^1.7.4
         version: 1.11.3
+      '@kdone/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
+      '@kdone/ai':
+        specifier: workspace:*
+        version: link:../../packages/ai
       '@kdone/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@kdone/epub':
+        specifier: workspace:*
+        version: link:../../packages/epub
+      '@kdone/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
+      '@kdone/publishing':
+        specifier: workspace:*
+        version: link:../../packages/publishing
       '@kdone/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@kdone/storage':
+        specifier: workspace:*
+        version: link:../../packages/storage
+      '@kdone/validation':
+        specifier: workspace:*
+        version: link:../../packages/validation
       drizzle-orm:
         specifier: ^0.38.3
         version: 0.38.4(@electric-sql/pglite@0.2.17)(@types/react@19.3.0)(postgres@3.4.9)(react@19.3.0)
@@ -92,6 +143,53 @@ importers:
         specifier: ^5.7.2
         version: 5.9.3
 
+  packages/agents:
+    dependencies:
+      '@kdone/ai':
+        specifier: workspace:*
+        version: link:../ai
+      '@kdone/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@kdone/storage':
+        specifier: workspace:*
+        version: link:../storage
+      '@kdone/validation':
+        specifier: workspace:*
+        version: link:../validation
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.32.0)
+
+  packages/ai:
+    dependencies:
+      '@kdone/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@kdone/validation':
+        specifier: workspace:*
+        version: link:../validation
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.32.0)
+
   packages/db:
     dependencies:
       '@kdone/shared':
@@ -116,6 +214,25 @@ importers:
       tsx:
         specifier: ^4.19.2
         version: 4.23.15
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.32.0)
+
+  packages/epub:
+    dependencies:
+      '@kdone/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@kdone/validation':
+        specifier: workspace:*
+        version: link:../validation
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -154,7 +271,64 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@22.20.5)(lightningcss@1.32.0)
 
+  packages/publishing:
+    dependencies:
+      '@kdone/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@kdone/validation':
+        specifier: workspace:*
+        version: link:../validation
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.32.0)
+
   packages/shared:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.32.0)
+
+  packages/storage:
+    dependencies:
+      '@kdone/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.32.0)
+
+  packages/validation:
+    dependencies:
+      '@kdone/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: ^3.24.1
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: ^22.10.2

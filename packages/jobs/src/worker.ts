@@ -12,7 +12,15 @@ export interface WorkerHandlerResult {
   output?: Record<string, unknown>;
   result?: Record<string, unknown>;
   agentType: string;
-  usage: { provider: string; model: string; inputUnits: number; outputUnits: number; estimatedCost: number; durationMs: number };
+  /** `durationMs` is optional; the worker records its own measured value. */
+  usage: {
+    provider: string;
+    model: string;
+    inputUnits: number;
+    outputUnits: number;
+    estimatedCost: number;
+    durationMs?: number;
+  };
   /** Lifecycle event applied on success. */
   event?: Parameters<Orchestrator["transition"]>[0]["event"];
   actorId?: string | null;
