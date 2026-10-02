@@ -1,0 +1,8 @@
+# Ignore everything in this repository
+*
+
+# Never ignore .gitignore itself, so it stays trackable
+!.gitignore
+
+# README.md is tracked, so do not ignore it
+!README.md
