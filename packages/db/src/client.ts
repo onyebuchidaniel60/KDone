@@ -1,8 +1,18 @@
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import type { PgDatabase } from "drizzle-orm/pg-core";
 import postgres from "postgres";
 import * as schema from "./schema.js";
 
 export type Db = PostgresJsDatabase<typeof schema>;
+
+/**
+ * Any Postgres-compatible drizzle instance.
+ *
+ * Production uses `postgres-js` (`Db`); tests use PGlite. Application code
+ * that is driver-agnostic (job store, orchestrator, worker) depends on this
+ * type so the real schema is exercised in both, without casting at call sites.
+ */
+export type AnyDb = PgDatabase<any, typeof schema>;
 
 /**
  * Production database client. Requires `DATABASE_URL`.
