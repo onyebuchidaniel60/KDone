@@ -1,8 +1,18 @@
-# Ignore everything in this repository
-*
+# Dependencies
+node_modules/
 
-# Never ignore .gitignore itself, so it stays trackable
-!.gitignore
+# Build output
+dist/
+.next/
+.turbo/
 
-# README.md is tracked, so do not ignore it
-!README.md
+# Test output
+coverage/
+
+# Logs
+*.log
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
