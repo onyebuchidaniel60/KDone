@@ -1006,6 +1006,7 @@ async editChapter(chapterId: string, userId: string, content?: string) {
         })),
       );
     }
+
     await this.db.update(bookProjects).set({ currentResearchProjectId: project!.id, updatedAt: new Date() }).where(eq(bookProjects.id, bookId));
     void userId;
   }

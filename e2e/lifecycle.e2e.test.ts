@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createDb } from "@kdone/db";
 import {
   approvalEvents,
@@ -91,13 +91,17 @@ async function json(response: Response) {
   return (await response.json()) as any;
 }
 
-/** Runs every queued job to completion, as the worker process would. */
+/**
+ * Runs every queued job for THIS run to completion, as the worker would.
+ * Scoped to this run's user so leftovers from earlier runs cannot fail the test.
+ */
 async function drain() {
   await app.runQueuedJobs();
+
   const failed = await db
     .select()
     .from(generationJobs)
-    .where(eq(generationJobs.status, "FAILED"));
+    .where(and(eq(generationJobs.userId, userId), eq(generationJobs.status, "FAILED")));
   if (failed.length > 0) {
     throw new Error(
       `Jobs failed: ${failed
@@ -109,7 +113,7 @@ async function drain() {
   const stuck = await db
     .select()
     .from(generationJobs)
-    .where(eq(generationJobs.status, "RUNNING"));
+    .where(and(eq(generationJobs.userId, userId), eq(generationJobs.status, "RUNNING")));
   if (stuck.length > 0) {
     throw new Error(
       `Jobs never completed: ${stuck
@@ -135,7 +139,10 @@ beforeAll(async () => {
   );
   await migrate(db, { migrationsFolder });
 
-  app = new KDone({ db, queue: new InMemoryQueue() });
+  // autoDeliver:false so runQueuedJobs() is the only driver of execution. With
+  // auto-delivery on, the queue would run each handler concurrently with
+  // runQueuedJobs, executing the same job twice.
+  app = new KDone({ db, queue: new InMemoryQueue({ autoDeliver: false }) });
   setAppForTesting(app);
 
   // Unique per run so repeated runs never collide. Nothing is ever deleted.
@@ -147,6 +154,18 @@ beforeAll(async () => {
 
 afterAll(async () => {
   setAppForTesting(null);
+
+  // Clean up ONLY this run's rows, scoped by the per-run user id. Deleting the
+  // book projects cascades to their jobs, chapters, drafts, research, issues,
+  // assets, provenance, approvals and audit rows.
+  try {
+    await db.delete(bookProjects).where(eq(bookProjects.userId, userId));
+    await db.delete(users).where(eq(users.id, userId));
+    console.error("E2E: cleaned up rows for user " + userId);
+  } catch (error) {
+    console.error("E2E: cleanup failed", error);
+  }
+
   await client.end();
 });
 

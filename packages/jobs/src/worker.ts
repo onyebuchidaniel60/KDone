@@ -130,11 +130,14 @@ export class Worker {
         result: result.result,
         output: result.output,
       });
+      console.error("WX< 1 done");
 
       await this.jobs.markSucceeded(job.id, result.output ?? {});
+      console.error("WX< 2 done");
 
       if (result.event) {
         const record = await this.jobs.findById(job.id);
+        console.error("WX< 3a findById ok bookId=" + (record ? "yes" : "no"));
         if (record) {
           await this.orchestrator.transition({
             bookProjectId: record.bookProjectId,
@@ -144,6 +147,7 @@ export class Worker {
             reason: `${job.type} completed`,
           });
         }
+        console.error("WX< 3 done");
       }
     } catch (error) {
       const code = error instanceof Error ? error.name : "PROVIDER_ERROR";

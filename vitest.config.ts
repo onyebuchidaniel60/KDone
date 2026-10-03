@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
-    exclude: ["**/node_modules/**", "**/dist/**", "e2e/**"],
+    // Repro suites require DATABASE_URL (real Postgres); run via `pnpm test:repro`.
+    exclude: ["**/node_modules/**", "**/dist/**", "e2e/**", "**/*.repro.test.ts"],
   },
 });
