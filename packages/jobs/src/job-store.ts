@@ -39,11 +39,28 @@ export class JobStore {
     return job;
   }
 
-  async markRunning(jobId: string): Promise<void> {
-    await this.db
+  /**
+   * Atomically claims a job by transitioning QUEUED -> RUNNING.
+   *
+   * Conditional on a claimable status, so the database is the arbiter: if a
+   * BullMQ lock expires and the job is redelivered to a second worker, exactly
+   * one caller gets a row back and the other must not execute the handler.
+   * RETRYING is claimable because that is the state a retryable failure leaves.
+   *
+   * @returns true when this caller claimed the job.
+   */
+  async markRunning(jobId: string): Promise<boolean> {
+    const rows = await this.db
       .update(generationJobs)
-      .set({ status: "RUNNING", startedAt: new Date(), attempts: sql`${generationJobs.attempts} + 1` })
-      .where(eq(generationJobs.id, jobId));
+      .set({
+        status: "RUNNING",
+        startedAt: new Date(),
+        attempts: sql`${generationJobs.attempts} + 1`,
+      })
+      .where(and(eq(generationJobs.id, jobId), inArray(generationJobs.status, ["QUEUED", "RETRYING"])))
+      .returning({ id: generationJobs.id });
+
+    return rows.length > 0;
   }
 
   async markSucceeded(jobId: string, output?: Record<string, unknown>): Promise<void> {

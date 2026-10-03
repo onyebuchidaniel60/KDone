@@ -27,7 +27,10 @@ export class InMemoryQueue implements Queue {
   private running = 0;
 
   constructor(options: InMemoryQueueOptions = {}) {
-    this.autoDeliver = options.autoDeliver ?? true;
+    // Defaults to false: auto-delivery runs a handler concurrently with any explicit
+    // driver (e.g. Worker.runOnce), executing the same job twice. Callers must
+    // opt in deliberately.
+    this.autoDeliver = options.autoDeliver ?? false;
   }
 
   async enqueue(jobType: string, payload: unknown, opts: EnqueueOptions = {}): Promise<string> {

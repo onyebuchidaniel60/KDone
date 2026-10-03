@@ -249,7 +249,13 @@ export function validateEpub(bytes: Uint8Array): EpubValidationResult {
 
   const mimetypeEntry = names.indexOf("mimetype");
   if (mimetypeEntry === 0) {
-    const stored = new TextDecoder().decode(bytes.slice(30, 30 + 20));
+    // Data starts after the local header, filename and extra field. Offset 30
+    // is the header size alone and is NOT the data offset.
+    const nameLength = view.getUint16(26, true);
+    const extraLength = view.getUint16(28, true);
+    const size = view.getUint32(18, true);
+    const dataStart = 30 + nameLength + extraLength;
+    const stored = new TextDecoder().decode(bytes.slice(dataStart, dataStart + size));
     if (stored !== "application/epub+zip") errors.push('mimetype must be "application/epub+zip"');
   }
 

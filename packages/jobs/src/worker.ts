@@ -111,7 +111,11 @@ export class Worker {
     const handler = this.handlers.get(job.type);
     if (!handler) throw new Error(`no handler registered for job type ${job.type}`);
 
-    await this.jobs.markRunning(job.id);
+    // The DB decides ownership of this job. If another worker already claimed it
+    // (BullMQ redelivery after an expired lock), do not run the handler again.
+    const claimed = await this.jobs.markRunning(job.id);
+    if (!claimed) return;
+
     const started = Date.now();
 
     try {

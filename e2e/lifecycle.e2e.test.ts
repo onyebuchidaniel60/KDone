@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { createDb } from "@kdone/db";
 import {
   approvalEvents,
@@ -110,14 +110,24 @@ async function drain() {
     );
   }
 
-  const stuck = await db
+  // RETRYING counts as failed here: a retryable failure leaves the row at
+  // RETRYING (not FAILED), and silently ignoring it would hide real errors.
+  const broken = await db
     .select()
     .from(generationJobs)
-    .where(and(eq(generationJobs.userId, userId), eq(generationJobs.status, "RUNNING")));
-  if (stuck.length > 0) {
+    .where(
+      and(
+        eq(generationJobs.userId, userId),
+        inArray(generationJobs.status, ["FAILED", "RETRYING", "RUNNING"]),
+      ),
+    );
+  if (broken.length > 0) {
     throw new Error(
-      `Jobs never completed: ${stuck
-        .map((j) => `${j.jobType}#${j.id.slice(0, 8)} ${j.status} attempts=${j.attempts}`)
+      `Jobs did not succeed: ${broken
+        .map(
+          (j) =>
+            `${j.jobType}#${j.id.slice(0, 8)} ${j.status} attempts=${j.attempts} ${j.errorCode ?? ""} ${j.errorMessage ?? ""}`,
+        )
         .join(" | ")}`,
     );
   }
@@ -293,14 +303,14 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
     expect(edited.status).toBe(200);
     expect(await bookStatus(bookId)).toBe("NEEDS_REVISION");
 
-    // A second attempt to publish while stale must still be refused.
+    // Publishing is refused. ADR-021 invalidates the approval on mutation, so the
+    // book is no longer USER_APPROVED and publish/start refuses on the state
+    // precondition before it ever compares artifact pointers.
     const drifted = await call(startPublishing, "POST", "/api/books/x/publish/start", {
       checklist: [...PUBLISHING_CHECKLIST],
     }, { bookId });
     expect(drifted.status).toBe(409);
-    const driftBody = await json(drifted);
-    expect(driftBody.error.code).toBe("ARTIFACT_DRIFT");
-    expect(driftBody.error.details.changed).toContain("manuscriptId");
+    expect(await bookStatus(bookId)).toBe("NEEDS_REVISION");
 
     // Preflight must pass and return the book to READY_FOR_REVIEW (ADR-021).
     const afterDrift = await json(

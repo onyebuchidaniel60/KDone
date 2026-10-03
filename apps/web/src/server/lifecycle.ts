@@ -873,18 +873,21 @@ async editChapter(chapterId: string, userId: string, content?: string) {
       const book = await this.loadBook(bookId);
       const bookIdUnsafe = bookId;
       if (!book!.currentManuscriptId) throw new Error("no current manuscript");
+      // Destructuring a `.limit(1)` query yields the row itself, not an array.
       const [manuscript] = await this.db.select().from(manuscripts).where(eq(manuscripts.id, book!.currentManuscriptId!)).limit(1);
+      if (!manuscript) throw new Error("current manuscript row missing");
       if (!book!.currentMetadataId) throw new Error("no current metadata");
       const [mdRow] = await this.db.select().from(bookMetadata).where(eq(bookMetadata.id, book!.currentMetadataId!)).limit(1);
+      if (!mdRow) throw new Error("current metadata row missing");
 
       const md = metadataOutputSchema.parse({
-        title: mdRow!.title, subtitle: mdRow!.subtitle ?? "", description: mdRow!.description ?? "",
-        authorNames: mdRow!.authorNames ?? [], keywords: mdRow!.keywords ?? [], categories: mdRow!.categories ?? [],
-        language: mdRow!.language ?? "en", rights: mdRow!.rights ?? "", price: mdRow!.price ?? "0.00",
-        aiDisclosure: aiDisclosureSchema.parse(mdRow!.aiDisclosure ?? "ai_generated"),
+        title: mdRow.title ?? "Untitled", subtitle: mdRow.subtitle ?? "", description: mdRow.description ?? "",
+        authorNames: mdRow.authorNames ?? [], keywords: mdRow.keywords ?? [], categories: mdRow.categories ?? [],
+        language: mdRow.language ?? "en", rights: mdRow.rights ?? "", price: mdRow.price ?? "0.00",
+        aiDisclosure: aiDisclosureSchema.parse(mdRow.aiDisclosure ?? "ai_generated"),
       });
 
-      const bytes = buildEpub({ manuscript: manuscript!.assembledContent as never, metadata: md });
+      const bytes = buildEpub({ manuscript: manuscript.assembledContent as never, metadata: md });
       const validation = validateEpub(bytes);
       if (!validation.valid) {
         throw new Error(`EPUB validation failed: ${validation.errors.join("; ")}`);
