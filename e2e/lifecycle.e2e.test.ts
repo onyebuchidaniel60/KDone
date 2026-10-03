@@ -105,6 +105,18 @@ async function drain() {
         .join(" | ")}`,
     );
   }
+
+  const stuck = await db
+    .select()
+    .from(generationJobs)
+    .where(eq(generationJobs.status, "RUNNING"));
+  if (stuck.length > 0) {
+    throw new Error(
+      `Jobs never completed: ${stuck
+        .map((j) => `${j.jobType}#${j.id.slice(0, 8)} ${j.status} attempts=${j.attempts}`)
+        .join(" | ")}`,
+    );
+  }
 }
 
 beforeAll(async () => {
