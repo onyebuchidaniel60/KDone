@@ -6,6 +6,7 @@ import {
   bookPlans,
   bookProjects,
   bookStateTransitions,
+  bookSettings,
   chapters,
   chapterDrafts,
   editorialReviews,
@@ -635,6 +636,47 @@ export class KDone {
       ? await this.db.select().from(publishingEvents).where(eq(publishingEvents.publishingJobId, job.id))
       : [];
     return { bookStatus: book.status, job: job ?? null, events };
+  }
+
+  async listJobs(bookId: string, userId: string) {
+    await this.requireBook(bookId, userId);
+    const rows = await this.db
+      .select()
+      .from(generationJobs)
+      .where(eq(generationJobs.bookProjectId, bookId))
+      .orderBy(desc(generationJobs.queuedAt));
+
+    return rows.map((job) => ({
+      jobId: job.id,
+      jobType: job.jobType,
+      status: job.status,
+      progress: job.progress,
+      message: job.errorMessage,
+      attempts: job.attempts,
+      queuedAt: job.queuedAt,
+      startedAt: job.startedAt,
+      completedAt: job.completedAt,
+    }));
+  }
+
+  /**
+   * Publishing settings for a user. `aiDisclosure` is a default preference and
+   * never drives publishing behaviour (ADR-014).
+   */
+  async getPublishingSettings(userId: string) {
+    const rows = await this.db
+      .select()
+      .from(bookSettings)
+      .where(eq(bookSettings.userId, userId))
+      .limit(1);
+    const existing = rows[0];
+    if (existing) return existing;
+
+    const [created] = await this.db
+      .insert(bookSettings)
+      .values({ userId, language: "en", primaryMarketplace: "US" })
+      .returning();
+    return created!;
   }
 
   /* ------------------------------------------------------------ Job handlers */

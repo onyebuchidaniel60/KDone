@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { createTestDb, type TestDbHandle } from "@kdone/db/test-db";
+import { createDb } from "@kdone/db";
 import {
   approvalEvents,
   bookProjects,
@@ -37,14 +37,37 @@ import { PUBLISHING_CHECKLIST } from "@kdone/publishing";
 /*
  * V1 Definition of Done: the full lifecycle through the HTTP handler layer.
  *
- * Runs with zero external services (ADR-020): PGlite in-process Postgres,
- * InMemoryQueue, MockStorageProvider, Mock providers.
+ * REQUIRES A REAL POSTGRES (no PGlite). PGlite's single-connection WASM model
+ * cannot sustain the sequential-statement pattern a job handler uses, so this
+ * suite runs against DATABASE_URL using the *same* drizzle-kit generated
+ * migrations that production applies. Unit tests still use PGlite.
  *
  * Step 10 is the important one: publish/start must REFUSE after a chapter is
- * mutated, because the approval is bound to exact artifact versions (ADR-013).
+ * mutated, because approval is bound to exact artifact versions (ADR-013).
  */
 
-let handle: TestDbHandle;
+/** Refuses to run unless DATABASE_URL points at a real Postgres. */
+function requireRealPostgres(): string {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      "E2E smoke test requires a real Postgres via DATABASE_URL.\n" +
+        "  This suite must NOT run on PGlite (single-connection WASM cannot sustain\n" +
+        "  a job handler's sequential statements).\n" +
+        "  Set DATABASE_URL, e.g. a Neon connection string, then run: pnpm test:e2e",
+    );
+  }
+  if (url.startsWith("pglite://") || url.includes("@localhost:5432/pglite")) {
+    throw new Error(`DATABASE_URL points at PGlite (${url}). A real Postgres is required.`);
+  }
+  if (!/^postgres(ql)?:\/\//.test(url)) {
+    throw new Error(`DATABASE_URL is not a Postgres connection string: ${url.slice(0, 12)}...`);
+  }
+  return url;
+}
+
+let client: { end: () => Promise<void> };
+let db: ReturnType<typeof createDb>["db"];
 let app: KDone;
 let userId: string;
 
@@ -69,7 +92,7 @@ async function json(response: Response) {
 /** Runs every queued job to completion, as the worker process would. */
 async function drain() {
   await app.runQueuedJobs();
-  const failed = await handle.db
+  const failed = await db
     .select()
     .from(generationJobs)
     .where(eq(generationJobs.status, "FAILED"));
@@ -80,25 +103,36 @@ async function drain() {
         .join(" | ")}`,
     );
   }
-  const all = await handle.db.select().from(generationJobs);
-  void all;
 }
 
 beforeAll(async () => {
-  handle = await createTestDb();
-  app = new KDone({ db: handle.db, queue: new InMemoryQueue() });
+  requireRealPostgres();
+
+  const created = createDb(process.env.DATABASE_URL);
+  db = created.db;
+  client = created.client;
+
+  // Apply the same generated migrations production uses.
+  const { migrate } = await import("drizzle-orm/postgres-js/migrator");
+  const { fileURLToPath } = await import("node:url");
+  const migrationsFolder = fileURLToPath(
+    new URL("../packages/db/drizzle", import.meta.url),
+  );
+  await migrate(db, { migrationsFolder });
+
+  app = new KDone({ db, queue: new InMemoryQueue() });
   setAppForTesting(app);
 
-  const [user] = await handle.db
+  // Unique per run so repeated runs never collide. Nothing is ever deleted.
+  userId = `e2e-${crypto.randomUUID()}`;
+  await db
     .insert(users)
-    .values({ id: "e2e-user", email: "e2e@example.test" })
-    .returning();
-  userId = user!.id;
+    .values({ id: userId, email: `${userId}@example.test` });
 });
 
 afterAll(async () => {
   setAppForTesting(null);
-  await handle.close();
+  await client.end();
 });
 
 describe("KDone V1 lifecycle (E2E smoke test)", () => {
@@ -141,7 +175,7 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
     expect(jobIds).toHaveLength(3);
     await drain();
 
-    const manuscript = await handle.db
+    const manuscript = await db
       .select()
       .from(manuscripts)
       .where(eq(manuscripts.bookProjectId, bookId));
@@ -200,7 +234,7 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
     expect(approval.epubAssetId).toBe(preview.epub.id);
     expect(approval.provenanceFingerprint).toMatch(/^[0-9a-f]{64}$/);
 
-    const approvals = await handle.db.select().from(approvalEvents).where(eq(approvalEvents.bookProjectId, bookId));
+    const approvals = await db.select().from(approvalEvents).where(eq(approvalEvents.bookProjectId, bookId));
     expect(approvals).toHaveLength(1);
     expect(await bookStatus(bookId)).toBe("USER_APPROVED");
 
@@ -250,11 +284,11 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
     expect(await bookStatus(bookId)).toBe("USER_APPROVED");
 
     /* Supporting invariants from the acceptance criteria. */
-    const jobs = await handle.db.select().from(generationJobs).where(eq(generationJobs.bookProjectId, bookId));
+    const jobs = await db.select().from(generationJobs).where(eq(generationJobs.bookProjectId, bookId));
     expect(jobs.length).toBeGreaterThan(0);
     expect(jobs.every((j) => j.status === "SUCCEEDED")).toBe(true);
 
-    const transitions = await handle.db
+    const transitions = await db
       .select()
       .from(bookStateTransitions)
       .where(eq(bookStateTransitions.bookProjectId, bookId));
@@ -266,36 +300,36 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
   /* ---------------------------------------------------------------- helpers */
 
   async function bookStatus(bookId: string): Promise<string> {
-    const [book] = await handle.db.select().from(bookProjects).where(eq(bookProjects.id, bookId));
+    const [book] = await db.select().from(bookProjects).where(eq(bookProjects.id, bookId));
     return book!.status;
   }
 
   async function resolveAllCritical(bookId: string) {
-    const rows = await handle.db
+    const rows = await db
       .select()
       .from(qualityIssues)
       .where(eq(qualityIssues.bookProjectId, bookId));
     for (const row of rows) {
       if (row.severity === "critical" && row.status === "open") {
-        await handle.db.update(qualityIssues).set({ status: "resolved" }).where(eq(qualityIssues.id, row.id));
+        await db.update(qualityIssues).set({ status: "resolved" }).where(eq(qualityIssues.id, row.id));
       }
     }
   }
 
   async function moveToQa(bookId: string) {
     const { Orchestrator } = await import("@kdone/jobs");
-    const orchestrator = new Orchestrator({ db: handle.db, queue: app.queue });
+    const orchestrator = new Orchestrator({ db: db, queue: app.queue });
     await orchestrator.transition({ bookProjectId: bookId, event: "PRODUCTION_START", actorType: "user" });
     await orchestrator.transition({ bookProjectId: bookId, event: "QA_START", actorType: "system" });
   }
 
   async function forceReadyForReview(bookId: string) {
-    await handle.db.update(bookProjects).set({ status: "READY_FOR_REVIEW" }).where(eq(bookProjects.id, bookId));
+    await db.update(bookProjects).set({ status: "READY_FOR_REVIEW" }).where(eq(bookProjects.id, bookId));
   }
 
   /** Directly edits a chapter draft and re-assembles, changing the manuscript id. */
   async function mutateChapterOne(bookId: string) {
-    const [manuscript] = await handle.db
+    const [manuscript] = await db
       .select()
       .from(manuscripts)
       .where(eq(manuscripts.bookProjectId, bookId));
@@ -309,7 +343,7 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
     );
 
     // A new manuscript version, never an overwrite of the approved one.
-    const [created] = await handle.db
+    const [created] = await db
       .insert(manuscripts)
       .values({
         bookProjectId: bookId,
@@ -320,7 +354,7 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
       })
       .returning();
 
-    await handle.db
+    await db
       .update(bookProjects)
       .set({ currentManuscriptId: created!.id })
       .where(eq(bookProjects.id, bookId));

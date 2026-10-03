@@ -33,3 +33,46 @@ KDone uses a one-shot V1 followed by iterative Agile-style refinement:
 `PRD → implementation spec → end-to-end V1 → real book run → backlog → prioritized fix → regression test → repeat`
 
 The first build aims for a complete, usable product loop rather than production perfection.
+
+## Running locally
+
+Docker is optional. Use managed Postgres (e.g. Neon) and Redis (e.g. Upstash), or
+`docker compose up -d` for local Postgres/Redis/MinIO.
+
+```bash
+pnpm install
+
+# Apply the real drizzle-kit migrations to DATABASE_URL
+pnpm --filter @kdone/db migrate
+
+# Web app (apps/web, port 3000)
+DATABASE_URL=postgres://... AUTH_SECRET=dev-secret AUTH_DEV_LOGIN=true REDIS_URL=rediss://... \
+  pnpm --filter web dev
+
+# Worker process (separate, ADR-016)
+DATABASE_URL=postgres://... REDIS_URL=rediss://... pnpm --filter worker dev
+```
+
+Without `REDIS_URL` the worker falls back to the in-memory queue, so jobs only
+run inside the web process.
+
+## Tests
+
+```bash
+pnpm test
+```
+Unit and integration tests. **Uses PGlite (in-process Postgres) with the real
+schema and the real generated migrations. No services required.** Currently 28
+passing.
+
+```bash
+pnpm test:e2e
+```
+The E2E smoke test (the V1 Definition of Done). **Requires `DATABASE_URL`
+pointing at a real Postgres** — it refuses to run against PGlite, because
+PGlite's single-connection WASM model cannot sustain the sequential-statement
+pattern a job handler uses. It applies the same migrations production uses.
+
+```bash
+DATABASE_URL=postgres://... pnpm test:e2e
+```

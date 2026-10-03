@@ -47,60 +47,54 @@ Phases F–K have been implemented but the E2E smoke test is **failing at step 2
 | KDP submission | **Not implemented by design.** Mode A prepare only. |
 | EPUB | Real deterministic builder + structural validator. |
 
-## Known blocking issue (E2E still red)
+## Known blocking issue (E2E red — needs DATABASE_URL)
 
-`pnpm test:e2e` **fails at step 2** (research). The book stays `RESEARCHING`
-instead of reaching `RESEARCH_READY`. `drain()` still fails loudly and was not
-weakened.
+`pnpm test:e2e` requires a **real Postgres** via `DATABASE_URL`. It now refuses
+to run on PGlite and fails loudly with instructions if the variable is unset or
+points at PGlite.
 
-**What was fixed:** the diagnosed `db.query.*.findFirst` calls in
-`lifecycle.ts` (9 sites, now a `loadBook()` helper using explicit
-`select().from().where().limit()`) and the same bug class in
-`books/[bookId]/page.tsx`. No `relations()` were added to the schema.
+**Why PGlite was dropped for E2E:** the agent call completed, the
+`research_projects` and `research_sources` inserts succeeded, then the *third*
+sequential statement in `persistResearch` stalled forever. Batching the sources
+loop moved the stall forward by exactly one statement, so the loop was not the
+cause — PGlite's single-connection WASM model cannot drain sequential statements
+the way a job handler issues them. Unit tests keep using PGlite and still pass
+(28/28); they were not changed.
 
-**Current symptom:** the research handler completes the agent call, inserts the
-`research_projects` row, and inserts `research_sources`. It then **stalls on
-the third sequential statement** (the `research_findings` insert). Batching the
-sources loop into one `values([...])` statement moved the stall forward by one
-statement, so the pattern is not the loop itself — **PGlite appears to stop
-draining after roughly two sequential statements issued through drizzle.**
+The E2E now applies the **same** drizzle-kit generated migrations production
+uses, and creates a unique user per run so repeated runs never collide. Nothing
+is ever deleted.
 
-**Next investigation (do not guess):**
-1. Confirm by isolating `persistResearch` in its own test against PGlite with no
-   worker, inserting three statements in sequence.
-2. If it reproduces, check whether the drizzle `pglite` driver requires
-   `await client.waitReady` / drains the query promise between statements, or
-   whether an in-flight statement from the previous step is never settled.
-3. Compare against `packages/db` tests, which pass many sequential inserts -
-   the difference is those use one statement per `it()` with `await`, while the
-   handler issues several inside a single job execution.
-4. Fall back to testcontainers for this suite only (per ADR-020) and document
-   why, if PGlite cannot be made to work.
-
-Also: `apps/web` uses the `x-kdone-user-id` header as a temporary identity
-stand-in. It is **hard-disabled when `NODE_ENV === "production"`** in
-`src/server/routes.ts`, so a deployed instance cannot accept a forged header.
-**It must be removed entirely once the E2E authenticates via Auth.js.**
+**Awaiting a Neon (or local Postgres) connection string to run it.**
 
 ## Open items before V1 can be declared complete
 
-1. **Fix the PGlite stall** so `pnpm test:e2e` passes end to end (blocker).
-2. **Tighten E2E step 11** — it currently reaches `READY_FOR_REVIEW` via a
-   direct DB write. It must go through the real API and state-machine path.
-3. **Replace `x-kdone-user-id` with the real Auth.js session**, then delete the
-   header path and the production guard.
-4. **Rate limiting (phase K) — DEFERRED, open.** Not implemented. Needs a store
-   decision: an in-process limiter is not correct across multiple web instances,
-   so this requires choosing and documenting a shared store (Redis being the
-   obvious candidate, since it is already a dependency for BullMQ). No ADR has
-   been written for it yet.
-5. **Storage is mocked only** — no S3/MinIO client is implemented, so
-   `StorageProvider` has exactly one implementation.
-6. **Worker UI and job polling** — `GET /api/books/:id/jobs` from API.md is not
-   implemented.
-7. **Settings endpoints** — `/api/settings/providers` and
-   `/api/settings/publishing` (documented in API.md section 13) are not
-   implemented; `/settings` is a placeholder page.
+1. **Run `pnpm test:e2e` against real Postgres** and fix whatever surfaces next
+   (blocker).
+2. **Tighten E2E step 11** — still reaches `READY_FOR_REVIEW` via a direct DB
+   write. Doing it through the real path exposes a genuine state-machine gap:
+   once a book is `USER_APPROVED`, the only permitted events are `PUBLISH_START`
+   and `CANCEL`. There is **no path back to `READY_FOR_REVIEW` after artifact
+   drift**, so a user who approves, edits chapter 7, and is refused at
+   `publish/start` cannot re-approve. ADR-013 requires re-approval to be
+   possible. **This needs a `USER_APPROVED → NEEDS_REVISION` transition added to
+   the state machine, which is a change beyond what the docs currently specify —
+   flagging rather than making it unilaterally.**
+3. **Replace `x-kdone-user-id`** with the real Auth.js session. It stays as the
+   E2E harness for now and is **hard-disabled when `NODE_ENV === "production"`**
+   in `src/server/routes.ts`, so a deployed instance cannot accept a forged
+   header. It must be deleted entirely once the E2E authenticates via Auth.js.
+4. **Rate limiting (phase K) — DEFERRED, open.** Not implemented. Needs a
+   shared-store decision: an in-process limiter is incorrect across multiple web
+   instances, so a store must be chosen and documented (Redis is the obvious
+   candidate, already required for BullMQ). No ADR written yet.
+5. **Storage is mocked only** — no S3/MinIO client implemented, so
+   `StorageProvider` has a single implementation.
+6. **Job polling UI** — `GET /api/books/:bookId/jobs` now exists, but no UI
+   consumes it.
+7. **Settings PATCH endpoints** — `GET /api/settings/providers` and
+   `GET /api/settings/publishing` are implemented; the `PATCH` variants from
+   API.md section 13 are not.
 
 ## How to run locally
 

@@ -295,3 +295,42 @@ export const publishingStatus = route(async (request, { params }) => {
   return j(await app().publishStatus(bookId, userId));
 });
 
+/* ------------------------------------------------------------------ Jobs */
+
+export const listJobs = route(async (request, { params }) => {
+  const userId = await currentUserId(request);
+  const bookId = requireParam(await params, "bookId");
+  return j({ jobs: await app().listJobs(bookId, userId) });
+});
+
+/* ------------------------------------------------------------------ Settings */
+
+/** Provider accounts. Raw credentials are never returned (API.md section 13). */
+export const getProviders = route(async (request) => {
+  const userId = await currentUserId(request);
+  const { db } = app();
+  const { providerAccounts } = await import("@kdone/db/schema");
+  const { eq } = await import("drizzle-orm");
+  const rows = await db
+    .select({
+      id: providerAccounts.id,
+      provider: providerAccounts.provider,
+      status: providerAccounts.status,
+      lastValidatedAt: providerAccounts.lastValidatedAt,
+      createdAt: providerAccounts.createdAt,
+      // encryptedCredentials is intentionally omitted.
+    })
+    .from(providerAccounts)
+    .where(eq(providerAccounts.userId, userId));
+  return j({ providers: rows });
+});
+
+/**
+ * Publishing settings. `aiDisclosure` here is a default preference only; the
+ * canonical disclosure state lives on each metadata version (ADR-014).
+ */
+export const getPublishingSettings = route(async (request) => {
+  const userId = await currentUserId(request);
+  return j({ settings: await app().getPublishingSettings(userId) });
+});
+
