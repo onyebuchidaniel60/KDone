@@ -145,6 +145,46 @@ export class Orchestrator {
     return { from: book.status, to };
   }
 
+  /**
+   * ADR-021: invalidates an approval when a bound artifact changes.
+   *
+   * Called centrally by every artifact-mutating path so the rule is not
+   * reimplemented per endpoint. A no-op unless the book is USER_APPROVED.
+   */
+  async invalidateApprovalOnMutation(input: {
+    bookProjectId: string;
+    artifact: "chapterDraft" | "manuscript" | "metadata" | "cover" | "epub";
+    actorType?: "user" | "system" | "agent";
+    actorId?: string | null;
+    reason?: string;
+  }): Promise<boolean> {
+    const [book] = await this.db
+      .select({ status: bookProjects.status })
+      .from(bookProjects)
+      .where(eq(bookProjects.id, input.bookProjectId));
+
+    if (!book || book.status !== "USER_APPROVED") return false;
+
+    await this.transition({
+      bookProjectId: input.bookProjectId,
+      event: "PREFLIGHT_NEEDS_REVISION",
+      actorType: input.actorType ?? "system",
+      actorId: input.actorId ?? null,
+      reason: input.reason ?? `${input.artifact} mutated after approval`,
+    });
+
+    await this.audit({
+      bookProjectId: input.bookProjectId,
+      actorType: input.actorType ?? "system",
+      eventType: "approval.invalidated",
+      entityType: "book_project",
+      entityId: input.bookProjectId,
+      metadata: { artifact: input.artifact },
+    });
+
+    return true;
+  }
+
   /** Records provider usage, duration and cost for an agent run. */
   async recordAgentRun(jobId: string, outcome: AgentRunOutcome): Promise<string> {
     const [run] = await this.db

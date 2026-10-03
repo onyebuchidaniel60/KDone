@@ -386,4 +386,5 @@ Rules:
 - `BookMetadata.ai_disclosure` is the canonical disclosure state for a metadata version. `BookSettings.ai_disclosure` is a default preference only and never drives publishing behavior (ADR-014).
 - A publishing job requires a current `ApprovalEvent` whose `manuscript_id`, `metadata_id`, `cover_asset_id`, and `epub_asset_id` equal the current artifact pointers on `BookProject`, and whose `provenance_fingerprint` still matches the current provenance state (ADR-013).
 - Publishing is refused when any current artifact pointer has drifted from the approval snapshot. Re-approval is required after manuscript, cover, metadata, or EPUB changes.
+- Mutating any bound artifact (chapter draft, metadata, cover, EPUB) while the book is `USER_APPROVED` invalidates the current `ApprovalEvent` and transitions the book to `NEEDS_REVISION` (ADR-021). A passing preflight then returns the book to `READY_FOR_REVIEW` for re-approval.
 - For prepare-only mode, `USER_APPROVED` is terminal. `PUBLISHING`, `SUBMITTED`, and `LIVE` are entered only when a publishing job is actually started (ADR-012).

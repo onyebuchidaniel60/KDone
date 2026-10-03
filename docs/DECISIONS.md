@@ -127,3 +127,18 @@ This document records durable decisions. Do not remove an old decision merely be
 - **Test queue:** `InMemoryQueue` (per the ADR-016 amendment). The E2E smoke test runs with `QUEUE_DRIVER=memory` and `NODE_ENV=test`, with `MockStorageProvider`, and requires no Redis, Postgres, or MinIO process.
 
 **Reason:** Keeps production infrastructure decisions intact while allowing the entire lifecycle to be exercised locally and in CI with zero external services. PGlite executes real Postgres semantics (constraints, foreign keys, transactions), so test fidelity is preserved. Any genuine PGlite feature gap falls back to testcontainers for that test only and must be documented with the reason.
+
+**Amendment:** PGlite is used for **unit and integration tests only**. The E2E smoke test requires a real Postgres via `DATABASE_URL`, because PGlite's single-connection WASM model cannot sustain the sequential-statement pattern a job handler issues. The E2E applies the same generated migrations as production.
+
+## ADR-021 — Stale approval transitions to `NEEDS_REVISION`
+
+**Decision:** Any mutation to a bound artifact (chapter draft, metadata, cover, or EPUB) while a book is in `USER_APPROVED` automatically transitions the book to `NEEDS_REVISION`. From `NEEDS_REVISION`, a successful preflight transitions the book back to `READY_FOR_REVIEW`, from which the user may approve again.
+
+**Reason:** ADR-013 binds approval to specific artifact versions, but without a state transition on mutation a book could display as `USER_APPROVED` while its `ApprovalEvent` no longer matched its current artifacts. `publish/start` would correctly refuse with `ARTIFACT_DRIFT`, but the user had no way to re-approve because the state machine forbade `USER_APPROVED` → `READY_FOR_REVIEW`. This made the drift-refusal scenario unrecoverable.
+
+**Effect:** Adds two transitions to the state machine:
+
+- `USER_APPROVED → NEEDS_REVISION` (automatic, on artifact mutation)
+- `NEEDS_REVISION → READY_FOR_REVIEW` (on preflight pass)
+
+`NEEDS_REVISION` remains a blocking state per `ARCHITECTURE.md` §8.

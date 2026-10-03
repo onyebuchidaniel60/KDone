@@ -295,6 +295,20 @@ export const publishingStatus = route(async (request, { params }) => {
   return j(await app().publishStatus(bookId, userId));
 });
 
+/** Chapter edit / regeneration. Appends a new draft version. */
+export const patchChapter = route(async (request, { params }) => {
+  const userId = await currentUserId(request);
+  const chapterId = requireParam(await params, "chapterId");
+  let content: string | undefined;
+  try {
+    const raw = (await request.json()) as { content?: unknown };
+    if (typeof raw.content === "string") content = raw.content;
+  } catch {
+    // Empty body means "regenerate this chapter's content".
+  }
+  return j(await app().editChapter(chapterId, userId, content));
+});
+
 /* ------------------------------------------------------------------ Jobs */
 
 export const listJobs = route(async (request, { params }) => {

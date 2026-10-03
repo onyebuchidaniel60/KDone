@@ -320,6 +320,7 @@ export class KDone {
       aiDisclosure: patch.aiDisclosure ?? existing.aiDisclosure,
     });
 
+    await this.orchestrator.invalidateApprovalOnMutation({ bookProjectId: bookId, artifact: "metadata", actorType: "user", actorId: userId });
     const version = (await this.db.select().from(bookMetadata).where(eq(bookMetadata.bookProjectId, bookId))).length + 1;
     const [created] = await this.db
       .insert(bookMetadata)
@@ -408,11 +409,12 @@ export class KDone {
     const passed = checks.every((c) => c.passed);
     await this.db.insert(preflightRuns).values({ bookProjectId: bookId, passed, checks });
 
-    if (passed && book.status === "QA") {
+    if (passed && (book.status === "QA" || book.status === "NEEDS_REVISION")) {
+      // ADR-011: QA -> READY_FOR_REVIEW. ADR-021: NEEDS_REVISION -> READY_FOR_REVIEW.
       await this.orchestrator.transition({
         bookProjectId: bookId, event: "PREFLIGHT_PASSED", actorType: "system", reason: "preflight passed",
       });
-    } else if (!passed && book.status === "QA") {
+    } else if (!passed && (book.status === "QA" || book.status === "NEEDS_REVISION")) {
       await this.orchestrator.transition({
         bookProjectId: bookId, event: "PREFLIGHT_NEEDS_REVISION", actorType: "system", reason: "preflight failed",
       }).catch(() => undefined);
@@ -636,6 +638,54 @@ export class KDone {
       ? await this.db.select().from(publishingEvents).where(eq(publishingEvents.publishingJobId, job.id))
       : [];
     return { bookStatus: book.status, job: job ?? null, events };
+  }
+
+  /**
+   * User edit or regeneration of a chapter. Appends a new immutable draft
+   * version (never overwrites), re-assembles the manuscript as a new version,
+   * and invalidates any approval via ADR-021.
+   */
+async editChapter(chapterId: string, userId: string, content?: string) {
+    const [chapter] = await this.db.select().from(chapters).where(eq(chapters.id, chapterId));
+    if (!chapter) throw errors.notFound("Chapter", chapterId);
+    const book = await this.requireBook(chapter.bookProjectId, userId);
+
+    const next =
+      content ??
+      (await this.loadBook(chapter.bookProjectId), // ensure book exists
+        (await this.loadDraftChapters(chapter.bookProjectId)).find((c) => c.ordinal === chapter.ordinal)?.content);
+
+    if (!next) throw errors.precondition("Chapter has no content to work from");
+
+    // ADR-021: mutating a bound artifact invalidates the approval.
+    await this.orchestrator.invalidateApprovalOnMutation({
+      bookProjectId: chapter.bookProjectId,
+      artifact: "chapterDraft",
+      actorType: "user",
+      actorId: userId,
+    });
+
+    await this.persistDraft(
+      chapter.id,
+      chapter.bookProjectId,
+      userId,
+      chapter.title ?? `Chapter ${chapter.ordinal}`,
+      next,
+      false,
+    );
+    const manuscript = await this.assembleIfComplete(chapter.bookProjectId);
+
+    await this.orchestrator.audit({
+      userId,
+      bookProjectId: chapter.bookProjectId,
+      actorType: "user",
+      eventType: "chapter.edited",
+      entityType: "chapter",
+      entityId: chapter.id,
+      metadata: { ordinal: chapter.ordinal, manuscriptId: manuscript?.id ?? null },
+    });
+
+    return { chapterId, manuscriptId: manuscript?.id ?? null, bookStatus: (await this.loadBook(chapter.bookProjectId))?.status };
   }
 
   async listJobs(bookId: string, userId: string) {
@@ -990,6 +1040,8 @@ export class KDone {
     chapterId: string, bookProjectId: string, userId: string,
     title: string, content: string, generated: boolean,
   ) {
+    await this.orchestrator.invalidateApprovalOnMutation({ bookProjectId, artifact: "chapterDraft", actorType: "user", actorId: userId });
+
     // Append a new version. Existing drafts are never overwritten.
     const version = (await this.db.select().from(chapterDrafts).where(eq(chapterDrafts.chapterId, chapterId))).length + 1;
     const provenance = generated
@@ -1042,6 +1094,7 @@ export class KDone {
     if (rows.length < expected) return null;
 
     const book = await this.loadBook(bookProjectId);
+    await this.orchestrator.invalidateApprovalOnMutation({ bookProjectId, artifact: "manuscript", actorType: "system" });
     const version = (await this.db.select().from(manuscripts).where(eq(manuscripts.bookProjectId, bookProjectId))).length + 1;
 
     const assembled = assembleManuscript({
@@ -1075,6 +1128,7 @@ export class KDone {
     extension: string, body: Uint8Array | string, mimeType: string,
     generated: boolean, provider: string, model: string,
   ) {
+    await this.orchestrator.invalidateApprovalOnMutation({ bookProjectId, artifact: assetType, actorType: "system" });
     const version = (await this.db.select().from(bookAssets).where(and(eq(bookAssets.bookProjectId, bookProjectId), eq(bookAssets.assetType, assetType)))).length + 1;
     const key = assetKey({ bookProjectId, assetType, version, extension });
 

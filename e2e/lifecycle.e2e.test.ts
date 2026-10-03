@@ -6,6 +6,7 @@ import {
   bookProjects,
   bookStateTransitions,
   generationJobs,
+  chapters as chaptersTable,
   manuscripts,
   qualityIssues,
   users,
@@ -29,6 +30,7 @@ import {
   startPlan,
   startPublishing,
   startResearch,
+  patchChapter,
   updateIssue,
   getIssues,
 } from "../apps/web/src/server/routes.js";
@@ -108,7 +110,8 @@ async function drain() {
 beforeAll(async () => {
   requireRealPostgres();
 
-  const created = createDb(process.env.DATABASE_URL);
+  // `prepare: false` for pooled endpoints such as Neon -pooler.
+  const created = createDb(process.env.DATABASE_URL, { prepare: false, max: 5 });
   db = created.db;
   client = created.client;
 
@@ -238,16 +241,28 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
     expect(approvals).toHaveLength(1);
     expect(await bookStatus(bookId)).toBe("USER_APPROVED");
 
-    /* 10. Mutates a chapter, then asserts publish/start REFUSES (ADR-013). */
-    const beforeDrift = await call(startPublishing, "POST", "/api/books/x/publish/start", {
-      checklist: [...PUBLISHING_CHECKLIST],
-    }, { bookId });
-    // Baseline: with an unchanged artifact set the checklist is the only gate,
-    // and the full checklist is supplied, so this must succeed.
-    expect(beforeDrift.status).toBe(202);
+    /* 10 + 11. The real drift path, with no direct DB writes (ADR-013/ADR-021). */
 
-    // Now mutate chapter 1 and re-approve is required.
-    await mutateChapterOne(bookId);
+    // Editing a bound chapter while approved must invalidate the approval
+    // and move the book to NEEDS_REVISION through the real API.
+    const chaptersRows = await db
+      .select()
+      .from(chaptersTable)
+      .where(eq(chaptersTable.bookProjectId, bookId))
+      .orderBy(chaptersTable.ordinal);
+    expect(chaptersRows.length).toBe(3);
+
+    const edited = await call(
+      patchChapter,
+      "PATCH",
+      "/api/chapters/x",
+      { content: "A revised opening that changes the approved artifact set." },
+      { chapterId: chaptersRows[0]!.id },
+    );
+    expect(edited.status).toBe(200);
+    expect(await bookStatus(bookId)).toBe("NEEDS_REVISION");
+
+    // A second attempt to publish while stale must still be refused.
     const drifted = await call(startPublishing, "POST", "/api/books/x/publish/start", {
       checklist: [...PUBLISHING_CHECKLIST],
     }, { bookId });
@@ -256,12 +271,15 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
     expect(driftBody.error.code).toBe("ARTIFACT_DRIFT");
     expect(driftBody.error.details.changed).toContain("manuscriptId");
 
-    /* 11. Re-approves, then publishes in prepare mode. */
-    // Editing a chapter moves the book out of USER_APPROVED in a real flow;
-    // here the drift is detected while still approved, so re-approval is the
-    // user's next action. Move back to READY_FOR_REVIEW to model that step.
-    await forceReadyForReview(bookId);
+    // Preflight must pass and return the book to READY_FOR_REVIEW (ADR-021).
+    const afterDrift = await json(
+      await call(runPreflight, "POST", "/api/books/x/preflight", undefined, { bookId }),
+    );
+    expect(afterDrift.checks.filter((c: any) => !c.passed)).toHaveLength(0);
+    expect(afterDrift.passed).toBe(true);
+    expect(await bookStatus(bookId)).toBe("READY_FOR_REVIEW");
 
+    // Re-approve through the API, then publish in prepare mode.
     const approveAgain = await call(approveBook, "POST", "/api/books/x/approve", undefined, { bookId });
     expect(approveAgain.status).toBe(200);
     expect((await json(approveAgain)).approval.id).not.toBe(approval.id);
@@ -323,40 +341,5 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
     await orchestrator.transition({ bookProjectId: bookId, event: "QA_START", actorType: "system" });
   }
 
-  async function forceReadyForReview(bookId: string) {
-    await db.update(bookProjects).set({ status: "READY_FOR_REVIEW" }).where(eq(bookProjects.id, bookId));
-  }
 
-  /** Directly edits a chapter draft and re-assembles, changing the manuscript id. */
-  async function mutateChapterOne(bookId: string) {
-    const [manuscript] = await db
-      .select()
-      .from(manuscripts)
-      .where(eq(manuscripts.bookProjectId, bookId));
-    const assembled = manuscript!.assembledContent as any;
-    const nextChapters = assembled.chapters.map((c: any, i: number) =>
-      i === 0 ? { ...c, content: `${c.content}\n\nA late editorial correction was added.` } : c,
-    );
-    const wordCount = nextChapters.reduce(
-      (n: number, c: any) => n + String(c.content).split(/\s+/).filter(Boolean).length,
-      0,
-    );
-
-    // A new manuscript version, never an overwrite of the approved one.
-    const [created] = await db
-      .insert(manuscripts)
-      .values({
-        bookProjectId: bookId,
-        version: manuscript!.version + 1,
-        assembledContent: { ...assembled, chapters: nextChapters, wordCount },
-        wordCount,
-        status: "ASSEMBLED",
-      })
-      .returning();
-
-    await db
-      .update(bookProjects)
-      .set({ currentManuscriptId: created!.id })
-      .where(eq(bookProjects.id, bookId));
-  }
 });

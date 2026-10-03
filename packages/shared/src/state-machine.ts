@@ -99,7 +99,12 @@ const TRANSITIONS: TransitionTable = {
   },
 
   // USER_APPROVED is terminal in prepare-only mode (ADR-012).
-  USER_APPROVED: { PUBLISH_START: "PUBLISHING", CANCEL: "CANCELLED" },
+  // ADR-021: mutating a bound artifact invalidates the approval.
+  USER_APPROVED: {
+    PUBLISH_START: "PUBLISHING",
+    PREFLIGHT_NEEDS_REVISION: "NEEDS_REVISION",
+    CANCEL: "CANCELLED",
+  },
 
   PUBLISHING: {
     SUBMIT_SUCCEEDED: "SUBMITTED",
@@ -117,6 +122,8 @@ const TRANSITIONS: TransitionTable = {
 
   NEEDS_REVISION: {
     RESUME_FROM_REVISION: "EDITING",
+    // ADR-021: a passing preflight lets the user re-approve after drift.
+    PREFLIGHT_PASSED: "READY_FOR_REVIEW",
     JOB_FAILED: "FAILED",
     CANCEL: "CANCELLED",
   },
