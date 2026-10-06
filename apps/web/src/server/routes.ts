@@ -1,7 +1,11 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
+import { auth } from "@/auth";
+import { getDb } from "@/lib/db";
+import { InMemoryQueue } from "@kdone/jobs";
 import { AppError, errors } from "@kdone/shared";
-import { KDone } from "./lifecycle.js";
+import type { KDone } from "./lifecycle";
+import { getApp } from "./container";
 import {
   createBookSchema,
   startPublishingSchema,
@@ -14,25 +18,6 @@ import {
  * live in the services. Errors are mapped to the shape in API.md section 2.
  */
 
-let override: KDone | null = null;
-let shared: KDone | null = null;
-
-/** Test seam: the E2E smoke test injects a PGlite-backed instance. */
-export function setAppForTesting(instance: KDone | null): void {
-  override = instance;
-}
-
-export function app(): KDone {
-  if (override) return override;
-  if (!shared) {
-    throw new AppError("INTERNAL", "Application services are not configured");
-  }
-  return shared;
-}
-
-export function setApp(instance: KDone): void {
-  shared = instance;
-}
 
 export async function parseBody<T>(
   request: NextRequest | Request,
@@ -66,6 +51,17 @@ function requireParam(params: Record<string, string | undefined>, key: string): 
   if (!value) throw errors.validation(`Missing route parameter: ${key}`);
   return value;
 }
+
+export { setAppForTesting } from "./container";
+
+/**
+ * Resolves the application container. Routes call this instead of depending on
+ * the container being wired up at import time.
+ */
+export function app(): KDone {
+  return getApp();
+}
+
 
 export function toErrorResponse(error: unknown): Response {
   if (error instanceof AppError) {
@@ -103,8 +99,51 @@ async function currentUserId(request: NextRequest): Promise<string> {
     const header = request.headers.get("x-kdone-user-id");
     if (header) return header;
   }
+  // Real identity: the Auth.js session, read per request and never cached in
+  // module scope. In production the header above is inert.
+  const session = await auth();
+  if (session?.user?.id) return session.user.id;
   throw errors.unauthenticated("No authenticated session");
 }
+
+/* ------------------------------------------------------------------ Register */
+
+const registerSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(10).max(200),
+  displayName: z.string().max(200).optional(),
+});
+
+export const register = route(async (request) => {
+  const body = await parseBody(request, registerSchema);
+  const { db } = app();
+  const { users } = await import("@kdone/db/schema");
+  const { eq } = await import("drizzle-orm");
+  const bcrypt = await import("bcryptjs");
+
+  const existing = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, body.email));
+  if (existing.length > 0) {
+    throw errors.validation("An account with that email already exists", {
+      issues: [{ path: "email", message: "already registered" }],
+    });
+  }
+
+  const [created] = await db
+    .insert(users)
+    .values({
+      id: crypto.randomUUID(),
+      email: body.email,
+      displayName: body.displayName ?? body.email.split("@")[0],
+      passwordHash: await bcrypt.hash(body.password, 10),
+    })
+    .returning({ id: users.id, email: users.email });
+
+  // Never echo the password or its hash.
+  return j({ user: { id: created!.id, email: created!.email } }, 201);
+});
 
 const j = (data: unknown, status = 200) => Response.json(data, { status });
 

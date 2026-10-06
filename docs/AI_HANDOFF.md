@@ -47,7 +47,21 @@ Phases F–K have been implemented but the E2E smoke test is **failing at step 2
 | KDP submission | **Not implemented by design.** Mode A prepare only. |
 | EPUB | Real deterministic builder + structural validator. |
 
-## Known blocking issue (E2E red — needs DATABASE_URL)
+## Current phase
+
+**V1 complete.** Deploy gate cleared: pnpm test:browser passes against
+production-mode 
+ext start with a real Auth.js session.
+
+## Test suites
+
+| Command | Needs | Result |
+|---|---|---|
+| pnpm test | nothing (PGlite) | 31/31 |
+| pnpm test:e2e | DATABASE_URL (real Postgres) | 1/1 |
+| pnpm test:browser | DATABASE_URL + Chromium cache | 2/2 |
+
+## Known blocking issue (RESOLVED — historical)
 
 `pnpm test:e2e` requires a **real Postgres** via `DATABASE_URL`. It now refuses
 to run on PGlite and fails loudly with instructions if the variable is unset or
@@ -138,3 +152,32 @@ pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
    delivery mechanism, so worker recovery re-queues abandoned `RUNNING` jobs.
 4. **Rate limiting not implemented** — deferred; needs a real store decision.
 5. **`User` id is `text`** to match Auth.js; all `user_id` columns are `text`.
+## Open items after deploy
+
+1. **S3 StorageProvider is NOT implemented — FIRST POST-DEPLOY TASK.**
+   Only `MockStorageProvider` exists, holding bytes in process memory. On
+   Vercel serverless, covers and EPUBs do **not** survive between invocations.
+   The `StorageProvider` interface and `S3_*` env placeholders are ready; the
+   implementation is not. Asset persistence is broken in hosted environments
+   until this lands.
+2. **Rate limiting deferred.** Needs a shared-store decision. An in-process
+   limiter is incorrect across multiple web instances; Redis is the obvious
+   candidate since BullMQ already requires it. No ADR written yet.
+3. **Settings PATCH not implemented.** `GET /api/settings/providers` and
+   `GET /api/settings/publishing` exist (API.md §13); the `PATCH` variants do
+   not, so provider credentials cannot be set through the app.
+4. **`x-kdone-user-id` must be deleted** once the HTTP E2E authenticates via
+   Auth.js. It remains as the E2E harness and is hard-disabled when
+   `NODE_ENV === "production"`.
+5. **First real-book run never performed.** All agents run against mock
+   providers, so research/writing/editorial quality is unproven. This is the
+   largest remaining risk to KDone being useful.
+
+## Security notes
+
+- Auth: Credentials provider with bcrypt verification. No auto-provisioning;
+  `POST /api/register` is the only way to create an account.
+- `AUTH_DEV_LOGIN` cannot activate in production.
+- No plaintext secrets. Provider credentials are write-only and never returned.
+- BullMQ is never statically bundled into the web app (verified: 0 references
+  in the Next build output).

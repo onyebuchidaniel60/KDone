@@ -66,6 +66,8 @@ export const users = pgTable("users", {
   emailVerified: timestamp("email_verified", { withTimezone: true }),
   image: text("image"),
   authProviderId: text("auth_provider_id"),
+  // Nullable: OAuth-only users have no password.
+  passwordHash: text("password_hash"),
   displayName: text("display_name"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),

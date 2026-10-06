@@ -3,6 +3,7 @@ import NextAuth from "next-auth";
 import type { Adapter } from "next-auth/adapters";
 import Credentials from "next-auth/providers/credentials";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 import * as schema from "@kdone/db/schema";
 import { createDb } from "@kdone/db";
 import { getDb } from "@/lib/db";
@@ -20,13 +21,16 @@ import { getDb } from "@/lib/db";
  * never fall back to a local dev account.
  */
 
+// The credentials provider is a real provider: it verifies the stored bcrypt
+// hash and never creates users. Registration is the only way to create an
+// account (POST /api/auth/register).
 const devLoginEnabled = process.env.AUTH_DEV_LOGIN === "true";
 
 export const isDevLoginEnabled = devLoginEnabled;
 
 const credentialsSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8),
+  password: z.string().min(10).max(200),
 });
 
 /**
@@ -56,33 +60,42 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
   providers: [
     Credentials({
-      id: "dev-credentials",
-      name: "Local development",
+      id: "credentials",
+      name: "Email and password",
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
       },
       async authorize(raw) {
-        if (!devLoginEnabled) return null;
-
         const parsed = credentialsSchema.safeParse(raw);
         if (!parsed.success) return null;
 
-        const { email } = parsed.data;
+        const { email, password } = parsed.data;
         try {
           const db = getDb();
-          const existing = await db.query.users.findFirst({
-            where: (users, { eq }) => eq(users.email, email),
-          });
+// Explicit select: the relational query API (db.query.*) requires relations()
+// and does not work here.
+const rows = await db
+    .select({
+      id: schema.users.id,
+      email: schema.users.email,
+      displayName: schema.users.displayName,
+      passwordHash: schema.users.passwordHash,
+    })
+    .from(schema.users)
+    .where(eq(schema.users.email, email))
+    .limit(1);
+  const found = rows[0];
+  if (!found) return null;
 
-          const user =
-            existing ??
-            (await db
-              .insert(schema.users)
-              .values({ id: crypto.randomUUID(), email, displayName: email.split("@")[0] ?? email })
-              .returning())[0];
+          // Real password verification. Dev login still requires the password to
+          // match the stored hash; it never auto-creates a user.
+          if (!found.passwordHash) return null;
+          const bcrypt = await import("bcryptjs");
+          const valid = await bcrypt.compare(password, found.passwordHash);
+          if (!valid) return null;
 
-          return user ? { id: user.id, email: user.email, name: user.displayName } : null;
+          return { id: found.id, email: found.email, name: found.displayName };
         } catch {
           return null;
         }

@@ -16,7 +16,8 @@
                     "db:migrate":  "pnpm --filter @kdone/db migrate",
                     "compose:up":  "docker compose up -d",
                     "compose:down":  "docker compose down",
-                    "test:repro":  "vitest run --config vitest.repro.config.ts"
+                    "test:repro":  "vitest run --config vitest.repro.config.ts",
+                    "test:browser":  "playwright test"
                 },
     "devDependencies":  {
                             "@kdone/agents":  "workspace:*",
@@ -28,6 +29,7 @@
                             "@kdone/shared":  "workspace:*",
                             "@kdone/storage":  "workspace:*",
                             "@kdone/validation":  "workspace:*",
+                            "@playwright/test":  "^1.63.0",
                             "@types/node":  "^22.10.2",
                             "drizzle-orm":  "^0.38.3",
                             "turbo":  "^2.3.3",

@@ -13,7 +13,7 @@ export default function LoginPage() {
     event.preventDefault();
     setPending(true);
     setError(null);
-    const result = await signIn("dev-credentials", { email, password, redirect: false });
+    const result = await signIn("credentials", { email, password, redirect: false });
     if (result?.error) {
       setError("Sign-in failed. The local dev provider requires AUTH_DEV_LOGIN=true.");
       setPending(false);
@@ -23,15 +23,16 @@ export default function LoginPage() {
   }
 
   return (
-    <form onSubmit={onSubmit} style={{ maxWidth: 360, display: "grid", gap: "0.75rem" }}>
+    <form onSubmit={onSubmit} data-testid="login-form" style={{ maxWidth: 360, display: "grid", gap: "0.75rem" }}>
       <h1>Sign in</h1>
       <label>
         Email
-        <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
+        <input data-testid="email" value={email} onChange={(e) => setEmail(e.target.value)} type="email" required />
       </label>
       <label>
         Password
         <input
+          data-testid="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           type="password"
@@ -39,8 +40,8 @@ export default function LoginPage() {
           minLength={8}
         />
       </label>
-      {error ? <p style={{ color: "crimson" }}>{error}</p> : null}
-      <button type="submit" disabled={pending}>
+      {error ? <p style={{ color: "crimson" }} data-testid="error">{error}</p> : null}
+      <button type="submit" data-testid="submit" disabled={pending}>
         {pending ? "Signing in…" : "Sign in"}
       </button>
     </form>
