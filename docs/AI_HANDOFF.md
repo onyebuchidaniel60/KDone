@@ -181,3 +181,48 @@ pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
 - No plaintext secrets. Provider credentials are write-only and never returned.
 - BullMQ is never statically bundled into the web app (verified: 0 references
   in the Next build output).
+## Deployment status (2026 round)
+
+- **Deployed URL:** https://kdone-uhhh2.vercel.app (Vercel project `uhhh2/kdone`)
+- **Migrations applied** to Neon (production DB).
+- **Env vars set (production scope, names only):** DATABASE_URL, AUTH_SECRET,
+  AUTH_TRUST_HOST, QUEUE_DRIVER, NODE_ENV, AUTH_URL, NEXT_PUBLIC_APP_URL.
+  `REDIS_URL` was NOT set (no Upstash URL was ever supplied) - see deviations.
+- **AUTH_DEV_LOGIN is not set in Vercel** (verified via `vercel env ls production`).
+
+### Render worker NOT provisioned
+
+Jobs enqueue but are never processed. On Vercel the queue falls back to
+InMemoryQueue, so jobs sit in-process. **This is expected, not a bug.**
+When Render is provisioned, add the SAME Upstash URL to BOTH Vercel and Render -
+byte-identical, or jobs enqueue to one Redis while the worker listens to
+another, and nothing fails loudly.
+
+### BLOCKER: Vercel Deployment Protection is enabled
+
+The live app returns, for `GET /api/books`:
+`302 text/plain` with body `Protected by Vercel Authentication`.
+`POST /api/register` returns `401`.
+
+Deployment Protection intercepts `/api/*` at the edge before the app runs, so
+the app is NOT usable in production yet. Nothing in the repository causes this:
+`vercel.json` and `next.config.ts` have no rewrites/redirects, there is no
+middleware, and no catch-all route. Fix: Vercel dashboard -> project ->
+Settings -> Deployment Protection -> disable (or add a bypass rule).
+
+### Deviations from the original deploy prompt
+
+1. `REDIS_URL` omitted - no Upstash URL was ever provided in the session.
+2. `next` added to ROOT devDependencies. Vercel detects the framework from the
+   root package.json where `next` is not a direct dependency; without it the
+   deploy fails with "No Next.js version detected". Documented in root
+   package.json `_comment` so it is not removed.
+
+### Auth incident (resolved)
+
+An earlier iteration gated the Credentials provider behind `AUTH_DEV_LOGIN`,
+which would have disabled sign-in in production. The gate was removed; the
+provider is always registered and always verifies the stored bcrypt hash.
+`playwright.config.ts` pins `AUTH_DEV_LOGIN=""` so the browser suite proves the
+real credential path with no dev bypass. The login page no longer tells users
+to set a dev flag.
