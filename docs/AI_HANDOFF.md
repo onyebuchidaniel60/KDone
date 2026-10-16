@@ -204,11 +204,12 @@ The live app returns, for `GET /api/books`:
 `302 text/plain` with body `Protected by Vercel Authentication`.
 `POST /api/register` returns `401`.
 
-Deployment Protection intercepts `/api/*` at the edge before the app runs, so
-the app is NOT usable in production yet. Nothing in the repository causes this:
-`vercel.json` and `next.config.ts` have no rewrites/redirects, there is no
-middleware, and no catch-all route. Fix: Vercel dashboard -> project ->
-Settings -> Deployment Protection -> disable (or add a bypass rule).
+`GET /login -> 200 text/html`
+`GET /api/books (no session) -> 401 application/json UNAUTHENTICATED`
+`POST /api/register (valid) -> 201 application/json`
+Browser: register -> sign in -> /dashboard, `__Secure-authjs.session-token` set,
+authenticated `GET /api/books -> 200`. Nothing in the repository caused this:
+no rewrites/redirects in vercel.json or next.config.ts, no middleware, no catch-all.
 
 ### Deviations from the original deploy prompt
 
