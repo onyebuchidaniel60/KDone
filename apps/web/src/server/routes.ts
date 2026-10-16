@@ -348,6 +348,30 @@ export const patchChapter = route(async (request, { params }) => {
   return j(await app().editChapter(chapterId, userId, content));
 });
 
+/**
+ * Streams an asset from private storage. Ownership is verified server-side, so
+ * a guessed asset id from another user's book is rejected.
+ */
+export const downloadAsset = route(async (request, { params }) => {
+  const userId = await currentUserId(request);
+  const p = await params;
+  const bookId = requireParam(p, "bookId");
+  const assetId = requireParam(p, "assetId");
+
+  const { bytes, mimeType } = await app().getAssetForDownload(bookId, assetId, userId);
+
+  return new Response(bytes as unknown as BodyInit, {
+    status: 200,
+    headers: {
+      "content-type": mimeType,
+      "content-length": String(bytes.byteLength),
+      // Private: never let a shared cache hold a user's book assets.
+      "cache-control": "private, no-store",
+      "content-disposition": "inline",
+    },
+  });
+});
+
 /* ------------------------------------------------------------------ Jobs */
 
 export const listJobs = route(async (request, { params }) => {

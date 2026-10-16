@@ -688,6 +688,30 @@ async editChapter(chapterId: string, userId: string, content?: string) {
     return { chapterId, manuscriptId: manuscript?.id ?? null, bookStatus: (await this.loadBook(chapter.bookProjectId))?.status };
   }
 
+  /**
+   * Streams a stored asset after an ownership check.
+   *
+   * The bucket is private and no signed URLs are handed out, so every asset
+   * read goes through here: the caller must own the book, and the asset must
+   * belong to it. Guessing a storage key is not sufficient.
+   */
+  async getAssetForDownload(bookId: string, assetId: string, userId: string) {
+    await this.requireBook(bookId, userId);
+
+    const [asset] = await this.db
+      .select()
+      .from(bookAssets)
+      .where(and(eq(bookAssets.id, assetId), eq(bookAssets.bookProjectId, bookId)))
+      .limit(1);
+
+    if (!asset) throw errors.notFound("Asset", assetId);
+
+    const bytes = await this.storage.get(asset.storageKey);
+    if (!bytes) throw errors.notFound("Asset contents", asset.storageKey);
+
+    return { bytes, mimeType: asset.mimeType ?? "application/octet-stream", asset };
+  }
+
   async listJobs(bookId: string, userId: string) {
     await this.requireBook(bookId, userId);
     const rows = await this.db

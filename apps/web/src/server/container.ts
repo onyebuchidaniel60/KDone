@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { InMemoryQueue } from "@kdone/jobs";
+import { selectStorage } from "@kdone/storage";
 import { KDone } from "./lifecycle";
 
 /*
@@ -22,7 +23,12 @@ let override: KDone | null = null;
 
 function buildFromEnv(): KDone {
   // autoDeliver:false - the web app must never execute a job handler itself.
-  return new KDone({ db: getDb(), queue: new InMemoryQueue({ autoDeliver: false }) });
+  // S3/R2 when configured, in-process mock otherwise (ADR-016 pattern).
+  return new KDone({
+    db: getDb(),
+    queue: new InMemoryQueue({ autoDeliver: false }),
+    storage: selectStorage(),
+  });
 }
 
 export function getApp(): KDone {

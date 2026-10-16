@@ -75,3 +75,5 @@ export function assetKey(input: {
 }
 
 export { sha256 };
+export * from "./s3-storage.js";
+export { selectStorage, isS3Configured, type StorageConfig } from "./select-storage.js";

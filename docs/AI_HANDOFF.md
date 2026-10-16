@@ -230,3 +230,26 @@ provider is always registered and always verifies the stored bcrypt hash.
 `playwright.config.ts` pins `AUTH_DEV_LOGIN=""` so the browser suite proves the
 real credential path with no dev bypass. The login page no longer tells users
 to set a dev flag.
+
+## Storage: S3StorageProvider implemented (Cloudflare R2)
+
+- `S3StorageProvider` in `packages/storage` implements the existing
+  `StorageProvider` interface via `@aws-sdk/client-s3`, with the R2
+  requirements: `forcePathStyle: true` and `region: "auto"`. Methods:
+  `put`, `get`, `delete`, `exists`, plus `contentType`.
+- **Selection mirrors the Queue pattern** (ADR-016): `selectStorage()` returns
+  S3 when `S3_ENDPOINT` + `S3_BUCKET` + credentials are all set, otherwise the
+  in-process `MockStorageProvider`. Only `select-storage.ts` and
+  `s3-storage.ts` know about AWS; nothing else imports the SDK.
+- The bucket is **private**. No long-lived signed URLs are issued -
+  `S3StorageProvider.signedUrl()` deliberately throws and points at the API.
+- **Assets are served through an authenticated, ownership-checked route:**
+  `GET /api/books/:bookId/assets/:assetId`. It verifies the caller owns the
+  book AND that the asset belongs to it, then streams from R2 with
+  `cache-control: private, no-store`. Guessing a storage key is not enough.
+- Tests: 11 unit tests against a mocked S3 client (no network) and one R2
+  integration test gated behind `S3_INTEGRATION=1`, verified passing against
+  real R2 (put -> exists -> get -> contentType -> delete -> gone).
+- Vercel production env now has S3_ENDPOINT, S3_REGION, S3_BUCKET,
+  S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY. Secrets were piped, never printed,
+  and are not committed.
