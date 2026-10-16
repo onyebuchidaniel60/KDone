@@ -198,19 +198,22 @@ When Render is provisioned, add the SAME Upstash URL to BOTH Vercel and Render -
 byte-identical, or jobs enqueue to one Redis while the worker listens to
 another, and nothing fails loudly.
 
-### BLOCKER: Vercel Deployment Protection is enabled
+### RESOLVED: Vercel Deployment Protection (was blocking all live traffic)
 
-The live app returns, for `GET /api/books`:
-`302 text/plain` with body `Protected by Vercel Authentication`.
-`POST /api/register` returns `401`.
+Deployment Protection was enabled and intercepted /api/* at the Vercel edge,
+returning 302 text/plain with body Protected by Vercel Authentication.
+It has since been disabled in the Vercel dashboard. Live verification after the fix:
 
-`GET /login -> 200 text/html`
-`GET /api/books (no session) -> 401 application/json UNAUTHENTICATED`
-`POST /api/register (valid) -> 201 application/json`
-Browser: register -> sign in -> /dashboard, `__Secure-authjs.session-token` set,
-authenticated `GET /api/books -> 200`. Nothing in the repository caused this:
-no rewrites/redirects in vercel.json or next.config.ts, no middleware, no catch-all.
+    GET  /login                  -> 200 text/html
+    GET  /api/books (no session) -> 401 application/json  UNAUTHENTICATED
+    POST /api/register (valid)   -> 201 application/json  { user: {...} }
+    Browser: register -> sign in -> /dashboard, __Secure-authjs.session-token
+            set, dashboard rendered, authenticated GET /api/books -> 200
 
+Nothing in the repository caused this: no rewrites/redirects in vercel.json
+or next.config.ts, no middleware, no catch-all. Regression coverage lives in
+e2e/unauthenticated-api.browser.test.ts, which asserts these exact
+status codes and content types.
 ### Deviations from the original deploy prompt
 
 1. `REDIS_URL` omitted - no Upstash URL was ever provided in the session.
