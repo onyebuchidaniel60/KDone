@@ -34,11 +34,13 @@
                             "drizzle-orm":  "^0.38.3",
                             "turbo":  "^2.3.3",
                             "typescript":  "^5.7.2",
-                            "vitest":  "^2.1.8"
+                            "vitest":  "^2.1.8",
+                            "next":  "^15.1.3"
                         },
     "pnpm":  {
                  "onlyBuiltDependencies":  [
                                                "esbuild"
                                            ]
-             }
+             },
+    "_comment":  "next is a devDependency HERE ON PURPOSE. Vercel detects the framework from the ROOT package.json; next lives in apps/web. Without this entry, \u0027vercel --prod\u0027 fails with \u0027No Next.js version detected\u0027. Do not remove it, and do not set rootDirectory in vercel.json (the build runs turbo from the repo root and outputs to apps/web/.next)."
 }

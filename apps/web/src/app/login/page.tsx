@@ -15,7 +15,7 @@ export default function LoginPage() {
     setError(null);
     const result = await signIn("credentials", { email, password, redirect: false });
     if (result?.error) {
-      setError("Sign-in failed. The local dev provider requires AUTH_DEV_LOGIN=true.");
+      setError("Sign-in failed. Check your email and password.");
       setPending(false);
       return;
     }

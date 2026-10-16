@@ -17,8 +17,7 @@ import { getDb } from "@/lib/db";
  * table. The adapter is still attached so user records live in `users` and
  * OAuth providers can be added later without a schema change.
  *
- * Credentials are only accepted when AUTH_DEV_LOGIN=true, so production can
- * never fall back to a local dev account.
+ * Credentials are always available and always verify the stored bcrypt hash.
  */
 
 // The credentials provider is a real provider: it verifies the stored bcrypt

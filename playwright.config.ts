@@ -23,7 +23,10 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // AUTH_DEV_LOGIN is deliberately NOT set here. The deployed app does not set it,
+  // and the suite must prove the real credential path works without any dev bypass.
   webServer: {
+    env: { AUTH_DEV_LOGIN: "" },
     command: "pnpm --filter web start --port 3100",
     url: baseURL,
     reuseExistingServer: false,
