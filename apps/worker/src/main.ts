@@ -3,7 +3,9 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createDb } from "@kdone/db";
-import { selectQueue, Worker } from "@kdone/jobs";
+import { selectQueue } from "@kdone/jobs";
+import { KDone } from "@kdone/handlers";
+import { selectStorage } from "@kdone/storage";
 
 /*
  * BullMQ worker process (ADR-016).
@@ -41,14 +43,12 @@ async function main(): Promise<void> {
 
   const { db } = createDb();
   const queue = await selectQueue();
-  const worker = new Worker({ db, queue });
 
-  // TODO(architecture): agent handlers live on the `KDone` container in
-  // apps/web/src/server/lifecycle.ts (private registerHandlers). The worker
-  // cannot import it because that module depends on the Next-only `@/lib/db`
-  // and `@/auth` aliases. Until those handlers are extracted into a
-  // worker-safe module, this process consumes nothing and every job stays
-  // QUEUED. See docs/AI_HANDOFF.md.
+  // Handlers come from @kdone/handlers, the same module apps/web uses, so the
+  // worker and the web app can never drift apart on which job types exist.
+  const app = new KDone({ db, queue, storage: selectStorage() });
+  const worker = app.worker;
+
 
   const recovered = await worker.recoverStaleJobs();
   if (recovered.length > 0) {
@@ -56,7 +56,9 @@ async function main(): Promise<void> {
   }
 
   await worker.start();
+  const types = app.registeredJobTypes();
   console.log(`Worker started with queue driver "${queue.driver}".`);
+  console.log(`Connected to ${queue.driver === "bullmq" ? "Upstash Redis" : "in-memory queue"} and registered ${types.length} handlers: ${types.sort().join(", ")}`);
 
   const shutdown = async (signal: string) => {
     console.log(`Received ${signal}; shutting down worker.`);
@@ -69,6 +71,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  console.error("Worker failed to start:", error instanceof Error ? error.message : String(error));
+  console.error("Worker failed to start:", error instanceof Error ? (error.stack ?? error.message) : String(error));
   process.exit(1);
 });

@@ -74,6 +74,9 @@ importers:
       '@kdone/epub':
         specifier: workspace:*
         version: link:../../packages/epub
+      '@kdone/handlers':
+        specifier: workspace:*
+        version: link:../../packages/handlers
       '@kdone/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
@@ -138,6 +141,9 @@ importers:
       '@kdone/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@kdone/handlers':
+        specifier: workspace:*
+        version: link:../../packages/handlers
       '@kdone/jobs':
         specifier: workspace:*
         version: link:../../packages/jobs
@@ -250,6 +256,49 @@ importers:
       '@kdone/validation':
         specifier: workspace:*
         version: link:../validation
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.20.5
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.20.5)(lightningcss@1.32.0)
+
+  packages/handlers:
+    dependencies:
+      '@kdone/agents':
+        specifier: workspace:*
+        version: link:../agents
+      '@kdone/ai':
+        specifier: workspace:*
+        version: link:../ai
+      '@kdone/db':
+        specifier: workspace:*
+        version: link:../db
+      '@kdone/epub':
+        specifier: workspace:*
+        version: link:../epub
+      '@kdone/jobs':
+        specifier: workspace:*
+        version: link:../jobs
+      '@kdone/publishing':
+        specifier: workspace:*
+        version: link:../publishing
+      '@kdone/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@kdone/storage':
+        specifier: workspace:*
+        version: link:../storage
+      '@kdone/validation':
+        specifier: workspace:*
+        version: link:../validation
+      drizzle-orm:
+        specifier: ^0.38.3
+        version: 0.38.4(@electric-sql/pglite@0.2.17)(@types/react@19.3.0)(postgres@3.4.9)(react@19.3.0)
     devDependencies:
       '@types/node':
         specifier: ^22.10.2

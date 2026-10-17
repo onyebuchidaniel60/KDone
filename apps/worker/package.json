@@ -1,22 +1,23 @@
 {
-  "name": "worker",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "dev": "tsx watch src/main.ts",
-    "start": "tsx src/main.ts",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@kdone/db": "workspace:*",
-    "@kdone/jobs": "workspace:*",
-    "@kdone/shared": "workspace:*",
-    "dotenv": "^18.0.8"
-  },
-  "devDependencies": {
-    "@types/node": "^22.10.2",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
-  }
+    "name":  "worker",
+    "version":  "0.1.0",
+    "private":  true,
+    "type":  "module",
+    "scripts":  {
+                    "dev":  "tsx watch src/main.ts",
+                    "start":  "tsx src/main.ts",
+                    "typecheck":  "tsc --noEmit"
+                },
+    "dependencies":  {
+                         "@kdone/db":  "workspace:*",
+                         "@kdone/jobs":  "workspace:*",
+                         "@kdone/shared":  "workspace:*",
+                         "dotenv":  "^18.0.8",
+                         "@kdone/handlers":  "workspace:*"
+                     },
+    "devDependencies":  {
+                            "@types/node":  "^22.10.2",
+                            "tsx":  "^4.19.2",
+                            "typescript":  "^5.7.2"
+                        }
 }
