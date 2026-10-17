@@ -76,3 +76,45 @@ pattern a job handler uses. It applies the same migrations production uses.
 ```bash
 DATABASE_URL=postgres://... pnpm test:e2e
 ```
+
+## Running the worker locally (laptop-hosted architecture)
+
+There is **no Render**. The worker runs on your machine and consumes from the
+**same Redis that Vercel enqueues to**. Both point at the same Neon database.
+
+### One-time setup
+
+Create `.env.worker` at the repo root (gitignored — `.env.*` is ignored):
+
+```
+DATABASE_URL=postgresql://USER:PASSWORD@HOST/neondb?sslmode=require
+REDIS_URL=rediss://default:TOKEN@HOST:6379
+QUEUE_DRIVER=bullmq
+```
+
+The value of `REDIS_URL` **must be byte-identical** to the one set in Vercel
+production env vars. If they differ, Vercel enqueues to one Redis and this
+worker listens to another; jobs sit at `QUEUED` forever and nothing errors.
+
+Do not put `channel_binding=require` in `DATABASE_URL`; `postgres-js` cannot
+negotiate it and the connection ends with `CONNECTION_ENDED`.
+
+### Start it
+
+```powershell
+pnpm --filter worker dev
+```
+
+`dotenv` loads `.env.worker` automatically. To override inline instead:
+
+```powershell
+$env:QUEUE_DRIVER="bullmq"; $env:REDIS_URL="rediss://..."; $env:DATABASE_URL="postgresql://..."; pnpm --filter worker dev
+```
+
+**The worker must be running for jobs to process.** Render (or any always-on
+host) is the future unattended option.
+
+> **Known blocker:** agent handlers are currently registered only inside the web
+> app's `KDone` container, which the worker cannot import. Until they are
+> extracted to a worker-safe module, this process starts and consumes nothing,
+> so jobs remain `QUEUED`. See `docs/AI_HANDOFF.md`.

@@ -253,3 +253,29 @@ to set a dev flag.
 - Vercel production env now has S3_ENDPOINT, S3_REGION, S3_BUCKET,
   S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY. Secrets were piped, never printed,
   and are not committed.
+## Worker architecture: laptop-hosted, no Render
+
+- The worker runs **on the developer's machine**. Vercel enqueues to Upstash
+  Redis; the local worker consumes from the **same** Redis; both use the same
+  Neon database. **Render is not used.**
+- **`REDIS_URL` is NOT yet set in Vercel production.** No Upstash URL has been
+  supplied in this session, so it could not be added. Vercel therefore falls
+  back to `InMemoryQueue`: jobs are enqueued in-process and never processed.
+  When the URL is available it must be added to Vercel **byte-identically** to
+  the worker's value, or jobs enqueue to one Redis while the worker listens to
+  another, silently.
+- **Start command:** `pnpm --filter worker dev` (dotenv loads a gitignored
+  `.env.worker` from the repo root containing `DATABASE_URL`, `REDIS_URL`,
+  `QUEUE_DRIVER=bullmq`). Inline override documented in README.md.
+- **The worker must be running for jobs to process.** Render is the future
+  unattended option.
+
+### BLOCKER: the worker registers no job handlers
+
+Agent handlers are registered inside the web app's `KDone` container
+(`apps/web/src/server/lifecycle.ts`, private `registerHandlers()`). That module
+depends on the Next-only `@/lib/db` and `@/auth` aliases, so `apps/worker`
+cannot import it. Consequence: **the worker starts and consumes nothing, and
+every enqueued job stays `QUEUED` indefinitely**, even once `REDIS_URL` is
+configured. The fix is to extract the agent handlers into a worker-safe module
+that both the web container and the worker can import.

@@ -11,7 +11,8 @@
   "dependencies": {
     "@kdone/db": "workspace:*",
     "@kdone/jobs": "workspace:*",
-    "@kdone/shared": "workspace:*"
+    "@kdone/shared": "workspace:*",
+    "dotenv": "^18.0.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
