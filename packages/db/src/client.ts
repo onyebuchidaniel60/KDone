@@ -44,10 +44,14 @@ export function createDb(
     );
   }
 
-  // Pooled endpoints (Neon -pooler, PgBouncer) require prepare: false.
   const isPooled = /-pooler\./.test(databaseUrl) || /pgbouncer/i.test(databaseUrl);
-  const prepare =
-    options.prepare ?? (isPooled ? false : process.env.DATABASE_PREPARE_STATEMENTS !== "false");
+  //
+  // Prepared statements are OFF by default for every caller (web, worker, tests).
+  // postgres.js 3.x fails binding a Date parameter on this Neon host, and every
+  // suite that passes (E2E, browser) uses prepare:false. Making it the default
+  // forces the web app and the worker to agree instead of deriving it per host.
+  // Opt in per-call or with DATABASE_PREPARE_STATEMENTS=true.
+  const prepare = options.prepare ?? process.env.DATABASE_PREPARE_STATEMENTS === "true";
 
   const client = postgres(databaseUrl, {
     max: options.max ?? (isPooled ? 5 : 10),

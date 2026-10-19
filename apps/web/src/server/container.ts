@@ -1,6 +1,6 @@
 import { getDb } from "@/lib/db";
-import { InMemoryQueue } from "@kdone/jobs";
 import { selectStorage } from "@kdone/storage";
+import { selectWebQueue } from "./queue";
 import { KDone } from "./lifecycle";
 
 /*
@@ -13,20 +13,21 @@ import { KDone } from "./lifecycle";
  * Tests can inject their own instance with `setAppForTesting()` (PGlite +
  * InMemoryQueue), which takes precedence.
  *
- * The web process only enqueues work; the separate worker process consumes it
- * (ADR-016). With no REDIS_URL the web app falls back to InMemoryQueue so local
- * dev works, but jobs then only run in-process.
+ * The queue comes from `selectWebQueue()` (ADR-016), the same way storage
+ * comes from `selectStorage()`: with REDIS_URL set the web app enqueues to
+ * BullMQ/Redis, and falls back to the InMemoryQueue (delivery disabled) when
+ * it is unset - exactly as `selectQueue()` in `@kdone/jobs` decides.
+ * The web process only enqueues and never consumes; see ./queue.ts.
  */
 
 let cached: KDone | null = null;
 let override: KDone | null = null;
 
 function buildFromEnv(): KDone {
-  // autoDeliver:false - the web app must never execute a job handler itself.
   // S3/R2 when configured, in-process mock otherwise (ADR-016 pattern).
   return new KDone({
     db: getDb(),
-    queue: new InMemoryQueue({ autoDeliver: false }),
+    queue: selectWebQueue(),
     storage: selectStorage(),
   });
 }
@@ -40,4 +41,10 @@ export function getApp(): KDone {
 /** Test seam: inject an instance (PGlite + InMemoryQueue). */
 export function setAppForTesting(instance: KDone | null): void {
   override = instance;
+}
+
+/** Test seam: forget the cached container so a test can rebuild with fresh env. */
+export function resetAppForTest(): void {
+  cached = null;
+  override = null;
 }

@@ -123,7 +123,8 @@ export class JobStore {
       .where(
         and(
           eq(generationJobs.status, "RUNNING"),
-          lt(sql`coalesce(${generationJobs.startedAt}, ${generationJobs.queuedAt})`, olderThan),
+          // Bind as an ISO string: postgres.js cannot serialize a Date on this host.
+          lt(sql`coalesce(${generationJobs.startedAt}, ${generationJobs.queuedAt})`, olderThan.toISOString()),
         ),
       );
   }
