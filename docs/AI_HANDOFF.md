@@ -1,15 +1,16 @@
 # KDone — AI Handoff
 
-## Current state (2026 iteration, before the container fix)
+## Current state (2026 iteration — container fix verified end-to-end)
 
 All V1 phases A–K are implemented. All suites green:
 
-- `pnpm test` — 45/45 (PGlite, no services needed)
+- `pnpm test` — **51/51** (PGlite, no services needed; includes the 6 new
+  container queue-selection drift tests)
 - `pnpm test:e2e` — 1/1 (against Neon via `DATABASE_URL`)
 - `pnpm test:browser` — 8/8
 
-Deployed: https://kdone-uhhh2.vercel.app (Vercel). The live build predates the
-prepare/Date fixes below and needs a redeploy.
+Deployed and **queue-verified live**: https://kdone-uhhh2.vercel.app
+(deployment `dpl_8AxABh3KApt6V98W3BvRQky8LiKV`).
 
 ### What changed since commit `940db1e` (handler extraction)
 
@@ -26,28 +27,52 @@ prepare/Date fixes below and needs a redeploy.
    registered 7 handlers: cover, epub, metadata, planning, qa, research,
    writing`. 7 handlers = research · planning · writing · qa · metadata ·
    cover · epub — the full enqueueable set, verified by the drift test.
-3. **`prepare: false` standardized** in `packages/db/src/client.ts`
-   (uncommitted). All postgres-js connections default to
-   `prepare: false` (overridable via `DATABASE_PREPARE_STATEMENTS=true`)
-   because Pooled Neon endpoints reject prepared statements; previously only
-   the passing suites (E2E/browser) set it, silently diverging from other
-   callers.
-4. **`JobStore.findStaleRunning()` Date binding fixed** (uncommitted,
-   `packages/jobs/src/job-store.ts`): it previously bound a raw `Date` to a
+3. **`prepare: false` standardized** in `packages/db/src/client.ts`.
+   All postgres-js connections default to `prepare: false` (overridable via
+   `DATABASE_PREPARE_STATEMENTS=true`) because pooled Neon endpoints reject
+   prepared statements; previously only the passing suites (E2E/browser) set
+   it, silently diverging from other callers.
+4. **`JobStore.findStaleRunning()` Date binding fixed** in
+   `packages/jobs/src/job-store.ts`: it previously bound a raw `Date` to a
    SQL `lt()` comparison; it now binds `olderThan.toISOString()` so the
    comparison is a string the driver serializes correctly.
-5. **BLOCKER (open, next task): `apps/web/src/server/container.ts`
-   hardcodes `new InMemoryQueue({ autoDeliver: false })`.** It never calls
-   `selectQueue()`, so with `REDIS_URL` set in Vercel the web app still
-   enqueues into an in-process queue that dies with the serverless
-   invocation — jobs never reach Upstash, the worker never sees them, and
-   they stay `QUEUED` forever. `REDIS_URL` IS set in Vercel but unused by the
-   web app. Fix: make the container use `selectQueue()` the same way it uses
-   `selectStorage()`, with a drift test preventing the hardcode from
-   returning. `prepare`/`Date` fixes + this fix must be deployed together
-   (`vercel --prod`), then the E2E path
-   `enqueued on Vercel → QUEUED in Neon → worker pickup → SUCCEEDED →
-   RESEARCH_READY in the UI` is the acceptance proof.
+5. **RESOLVED: the web container now selects its queue via
+   `selectQueue()` (ADR-016).** It previously hardcoded
+   `new InMemoryQueue({ autoDeliver: false })`, so with `REDIS_URL` set in
+   Vercel the web app kept enqueueing into an in-process queue that dies
+   with the serverless invocation — jobs never reached Upstash and sat
+   `QUEUED` forever. Implemented as **option (d), the produce-only lazy
+   queue** (smallest call-site churn of a/b/c/d):
+
+   - `apps/web/src/server/queue.ts` — `LazyEnqueueQueue` resolves
+     `selectQueue()` on first use, so sync `getApp()` and all 30 route call
+     sites stay unchanged; an eager import (option c) was rejected because it
+     would statically bundle bullmq/ioredis into the Next bundle. It is
+     **produce-only**: `registerWorker()` records handlers locally and never
+     forwards them, because `BullMQQueue.registerWorker()` constructs real
+     consumers and the web process must never execute job handlers in
+     serverless invocations.
+   - `packages/jobs/src/select-queue.ts` — `selectQueueDriver()` exposes
+     selectQueue()'s env decision synchronously (single source of truth for
+     both forms).
+   - Drift tests in `apps/web/src/server/container.test.ts`: REDIS_URL set →
+     BullMQ, unset → InMemoryQueue (`autoDeliver:false` default = the exact
+     old hardcode semantics), `QUEUE_DRIVER=memory` override, registration is
+     not forwarded into the driver queue, plus a structural guard asserting
+     `container.ts` contains neither `new InMemoryQueue` nor
+     `new BullMQQueue` and does contain `selectWebQueue()`.
+   - Build verified separately: bullmq/ioredis compile into a lazy webpack
+     chunk (`c.e(9001)`), and no API route bundle references that chunk
+     eagerly.
+
+6. **E2E verified against the live URL (2026-10-19):**
+   register (201) → Auth.js sign-in (302, real session) → create book
+   (DRAFT) → `POST /api/books/:id/research` → 202 `{jobId, status: QUEUED}` →
+   `generation_jobs` row in Neon observed with status QUEUED → local worker
+   picked it up via Upstash → SUCCEEDED on attempt 1 (mock research agent,
+   2 sources / 2 findings) → live URL shows `RESEARCH_READY` after refresh.
+   Job `8e0d5805-0325-4be2-950e-671e7ac9667f`, book
+   `6037ebd2-d8a5-4c7f-860c-11616ea76a1f`.
 
 ## Definition of Done status
 
@@ -197,12 +222,8 @@ pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
 5. **`User` id is `text`** to match Auth.js; all `user_id` columns are `text`.
 ## Open items after deploy
 
-1. **S3 StorageProvider is NOT implemented — FIRST POST-DEPLOY TASK.**
-   Only `MockStorageProvider` exists, holding bytes in process memory. On
-   Vercel serverless, covers and EPUBs do **not** survive between invocations.
-   The `StorageProvider` interface and `S3_*` env placeholders are ready; the
-   implementation is not. Asset persistence is broken in hosted environments
-   until this lands.
+1. **S3 StorageProvider — DONE** (Cloudflare R2, verified; see the Storage
+   section below). Kept here so the historical item is not silently lost.
 2. **Rate limiting deferred.** Needs a shared-store decision. An in-process
    limiter is incorrect across multiple web instances; Redis is the obvious
    candidate since BullMQ already requires it. No ADR written yet.
@@ -215,6 +236,9 @@ pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
 5. **First real-book run never performed.** All agents run against mock
    providers, so research/writing/editorial quality is unproven. This is the
    largest remaining risk to KDone being useful.
+6. **Replace the leftover `WX< N` debug `console.error` lines** in
+   `packages/jobs/src/worker.ts` with structured per-job lifecycle logs
+   (see "Known log noise" below).
 
 ## Security notes
 
@@ -222,24 +246,34 @@ pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
   `POST /api/register` is the only way to create an account.
 - `AUTH_DEV_LOGIN` cannot activate in production.
 - No plaintext secrets. Provider credentials are write-only and never returned.
-- BullMQ is never statically bundled into the web app (verified: 0 references
-  in the Next build output).
+- BullMQ is never **statically** bundled into the web app: ioredis compiles
+  into a lazy webpack chunk that only loads when `selectQueue()` resolves the
+  BullMQ driver at first enqueue (verified: no API route bundle references
+  the chunk eagerly; the only chunk reference is the dynamic `c.e(9001)`
+  load inside the selection function).
 ## Deployment status (2026 round)
 
 - **Deployed URL:** https://kdone-uhhh2.vercel.app (Vercel project `uhhh2/kdone`)
+- **Latest production deployment:** `dpl_8AxABh3KApt6V98W3BvRQky8LiKV`
+  (2026-10-19) — contains the container `selectQueue()` fix, the handler
+  extraction, `prepare: false` standardization and the `findStaleRunning`
+  Date-binding fix. Queue path verified end-to-end (see "Current state").
 - **Migrations applied** to Neon (production DB).
 - **Env vars set (production scope, names only):** DATABASE_URL, AUTH_SECRET,
-  AUTH_TRUST_HOST, QUEUE_DRIVER, NODE_ENV, AUTH_URL, NEXT_PUBLIC_APP_URL.
-  `REDIS_URL` was NOT set (no Upstash URL was ever supplied) - see deviations.
+  AUTH_TRUST_HOST, QUEUE_DRIVER, NODE_ENV, AUTH_URL, NEXT_PUBLIC_APP_URL,
+  REDIS_URL (Upstash — set as of the laptop-worker round; drive byte-identical
+  with `.env.worker`), plus the S3_/R2 variables listed under Storage below.
 - **AUTH_DEV_LOGIN is not set in Vercel** (verified via `vercel env ls production`).
 
-### Render worker NOT provisioned
+### Worker: laptop-hosted (no Render)
 
-Jobs enqueue but are never processed. On Vercel the queue falls back to
-InMemoryQueue, so jobs sit in-process. **This is expected, not a bug.**
-When Render is provisioned, add the SAME Upstash URL to BOTH Vercel and Render -
-byte-identical, or jobs enqueue to one Redis while the worker listens to
-another, and nothing fails loudly.
+Jobs enqueue to Upstash from Vercel and are consumed by the local worker
+(`pnpm --filter worker dev`), which shares the SAME Upstash + Neon
+credentials via the gitignored `.env.worker`. The worker must be running for
+jobs to process; on a fresh machine it must be started manually. If a
+deployment ever changes the Redis URL, BOTH Vercel and `.env.worker` must
+change together - byte-identical, or jobs enqueue to one Redis while the
+worker listens to another, and nothing fails loudly.
 
 ### RESOLVED: Vercel Deployment Protection (was blocking all live traffic)
 
@@ -301,15 +335,15 @@ to set a dev flag.
 - The worker runs **on the developer's machine**. Vercel enqueues to Upstash
   Redis; the local worker consumes from the **same** Redis; both use the same
   Neon database. **Render is not used.**
-- **`REDIS_URL` is NOT yet set in Vercel production.** No Upstash URL has been
-  supplied in this session, so it could not be added. Vercel therefore falls
-  back to `InMemoryQueue`: jobs are enqueued in-process and never processed.
-  When the URL is available it must be added to Vercel **byte-identically** to
-  the worker's value, or jobs enqueue to one Redis while the worker listens to
-  another, silently.
+- **`REDIS_URL` IS set in Vercel production** and drives the laptop worker
+  through the gitignored `.env.worker`; the two must stay byte-identical.
+  This round also verified the other half of the contract: the web container
+  actually calls `selectQueue()` now (see "Current state"), so REDIS_URL is
+  no longer ignored by the web app.
 - **Start command:** `pnpm --filter worker dev` (dotenv loads a gitignored
   `.env.worker` from the repo root containing `DATABASE_URL`, `REDIS_URL`,
   `QUEUE_DRIVER=bullmq`). Inline override documented in README.md.
+  Startup must log `Connected to Upstash Redis and registered 7 handlers`.
 - **The worker must be running for jobs to process.** Render is the future
   unattended option.
 
@@ -325,6 +359,16 @@ issued the following warning - now historical:
 Fix applied: handlers extracted into `packages/handlers` (`@kdone/handlers`),
 the same module imported by both `apps/web` and `apps/worker`, guarded by the
 handler drift test in `packages/handlers/src/handlers.test.ts`. The remaining
-blocker is different: the web container still hardcodes `InMemoryQueue`
-instead of calling `selectQueue()` - see the BLOCKER entry under
-"Current state" at the top of this file.
+half of that failure was the container hardcoding `InMemoryQueue` instead of
+calling `selectQueue()` — also fixed and verified; see "Current state" at the
+top of this file.
+
+### Known log noise (cleanup candidate)
+
+`packages/jobs/src/worker.ts` still contains leftover debug lines
+(`console.error("WX< 1 done")`, `WX< 2 done`, `WX< 3a findById ok`, `WX<
+3 done`) from the earlier Neon-durability debugging. They appear in every
+job execution's worker log. They are harmless — and were used as pickup /
+success evidence during the 2026-10-19 e2e — but they should be replaced by
+structured per-job lifecycle logs (pickup started, succeeded, transition
+applied) in a cleanup iteration.
