@@ -1,10 +1,53 @@
 # KDone — AI Handoff
 
-## Current phase
+## Current state (2026 iteration, before the container fix)
 
-**Phase K (hardening) — INCOMPLETE.** Phases A–E are complete and verified.
-Phases F–K have been implemented but the E2E smoke test is **failing at step 2**
-(research). V1 is **not** complete.
+All V1 phases A–K are implemented. All suites green:
+
+- `pnpm test` — 45/45 (PGlite, no services needed)
+- `pnpm test:e2e` — 1/1 (against Neon via `DATABASE_URL`)
+- `pnpm test:browser` — 8/8
+
+Deployed: https://kdone-uhhh2.vercel.app (Vercel). The live build predates the
+prepare/Date fixes below and needs a redeploy.
+
+### What changed since commit `940db1e` (handler extraction)
+
+1. **Handler extraction is DONE.** Agent handlers moved into
+   `packages/handlers` (`@kdone/handlers`), which both `apps/web` and
+   `apps/worker` import. The handler drift test lives in
+   `packages/handlers/src/handlers.test.ts` (3 tests: one handler for every
+   enqueueable job type, no job types beyond the known set, no Next-only
+   imports). Committed as `940db1e`.
+2. **Worker startup expectation.** `pnpm --filter worker dev` loads a
+   gitignored `.env.worker` at the repo root (`DATABASE_URL`, `REDIS_URL`,
+   `QUEUE_DRIVER=bullmq`), connects to Upstash Redis, calls
+   `recoverStaleJobs()`, starts, and logs: `Connected to Upstash Redis and
+   registered 7 handlers: cover, epub, metadata, planning, qa, research,
+   writing`. 7 handlers = research · planning · writing · qa · metadata ·
+   cover · epub — the full enqueueable set, verified by the drift test.
+3. **`prepare: false` standardized** in `packages/db/src/client.ts`
+   (uncommitted). All postgres-js connections default to
+   `prepare: false` (overridable via `DATABASE_PREPARE_STATEMENTS=true`)
+   because Pooled Neon endpoints reject prepared statements; previously only
+   the passing suites (E2E/browser) set it, silently diverging from other
+   callers.
+4. **`JobStore.findStaleRunning()` Date binding fixed** (uncommitted,
+   `packages/jobs/src/job-store.ts`): it previously bound a raw `Date` to a
+   SQL `lt()` comparison; it now binds `olderThan.toISOString()` so the
+   comparison is a string the driver serializes correctly.
+5. **BLOCKER (open, next task): `apps/web/src/server/container.ts`
+   hardcodes `new InMemoryQueue({ autoDeliver: false })`.** It never calls
+   `selectQueue()`, so with `REDIS_URL` set in Vercel the web app still
+   enqueues into an in-process queue that dies with the serverless
+   invocation — jobs never reach Upstash, the worker never sees them, and
+   they stay `QUEUED` forever. `REDIS_URL` IS set in Vercel but unused by the
+   web app. Fix: make the container use `selectQueue()` the same way it uses
+   `selectStorage()`, with a drift test preventing the hardcode from
+   returning. `prepare`/`Date` fixes + this fix must be deployed together
+   (`vercel --prod`), then the E2E path
+   `enqueued on Vercel → QUEUED in Neon → worker pickup → SUCCEEDED →
+   RESEARCH_READY in the UI` is the acceptance proof.
 
 ## Definition of Done status
 
@@ -49,17 +92,17 @@ Phases F–K have been implemented but the E2E smoke test is **failing at step 2
 
 ## Current phase
 
-**V1 complete.** Deploy gate cleared: pnpm test:browser passes against
-production-mode 
-ext start with a real Auth.js session.
+**Superseded by "Current state" at the top of this file.** The lifecycle is
+implemented and all suites pass; the remaining gap is the container/queue
+blocker plus the live end-to-end proof of the queue path.
 
 ## Test suites
 
 | Command | Needs | Result |
 |---|---|---|
-| pnpm test | nothing (PGlite) | 31/31 |
+| pnpm test | nothing (PGlite) | 45/45 |
 | pnpm test:e2e | DATABASE_URL (real Postgres) | 1/1 |
-| pnpm test:browser | DATABASE_URL + Chromium cache | 2/2 |
+| pnpm test:browser | DATABASE_URL + Chromium cache | 8/8 |
 
 ## Known blocking issue (RESOLVED — historical)
 
@@ -270,12 +313,18 @@ to set a dev flag.
 - **The worker must be running for jobs to process.** Render is the future
   unattended option.
 
-### BLOCKER: the worker registers no job handlers
+### RESOLVED: handlers extracted to `@kdone/handlers`
 
-Agent handlers are registered inside the web app's `KDone` container
-(`apps/web/src/server/lifecycle.ts`, private `registerHandlers()`). That module
-depends on the Next-only `@/lib/db` and `@/auth` aliases, so `apps/worker`
-cannot import it. Consequence: **the worker starts and consumes nothing, and
-every enqueued job stays `QUEUED` indefinitely**, even once `REDIS_URL` is
-configured. The fix is to extract the agent handlers into a worker-safe module
-that both the web container and the worker can import.
+Agent handlers used to be registered inside the web app's `KDone` container
+(`apps/web/src/server/lifecycle.ts`, private `registerHandlers()`), which
+issued the following warning - now historical:
+
+> the worker starts and consumes nothing, and every enqueued job stays
+> `QUEUED` indefinitely
+
+Fix applied: handlers extracted into `packages/handlers` (`@kdone/handlers`),
+the same module imported by both `apps/web` and `apps/worker`, guarded by the
+handler drift test in `packages/handlers/src/handlers.test.ts`. The remaining
+blocker is different: the web container still hardcodes `InMemoryQueue`
+instead of calling `selectQueue()` - see the BLOCKER entry under
+"Current state" at the top of this file.
