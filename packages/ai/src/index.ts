@@ -14,6 +14,8 @@ import {
   type PlanOutput,
   type ResearchOutput,
 } from "@kdone/validation";
+import { OpenRouterProvider, OpenRouterResearchProvider } from "./openrouter-provider.js";
+import { selectLLM } from "./select-llm.js";
 import type { z } from "zod";
 
 /*
@@ -322,12 +324,35 @@ export class MockImageProvider implements ImageProvider {
 
 export type { ChapterContent, CoverOutput, MetadataOutput, PlanOutput, ResearchOutput };
 
+export type {
+  OpenRouterClientShape,
+  OpenRouterOptions,
+  OpenRouterRequestExtension,
+} from "./openrouter-provider.js";
+export {
+  EDITORIAL_MODEL,
+  LLM_MODEL_ROUTES,
+  LLMRefusalError,
+  LLMTruncatedError,
+  OPENROUTER_BASE_URL,
+  OPENROUTER_DEFAULT_HEADERS,
+  OPENROUTER_MODEL_RATES_USD_PER_1M,
+  OpenRouterProvider,
+  OpenRouterResearchProvider,
+  UTILITY_MODEL,
+  WRITING_MODEL,
+  buildResponseFormat,
+  estimateCost,
+  normalizeStrictSchema,
+} from "./openrouter-provider.js";
+export { selectLLM } from "./select-llm.js";
+
 /** Default provider set used when no real credentials are configured. */
 export function defaultProviders() {
-  const llm = new MockLLMProvider();
+  const llm = selectLLM();
   return {
     llm,
-    research: new MockResearchProvider(),
+    research: llm instanceof OpenRouterProvider ? new OpenRouterResearchProvider(llm) : new MockResearchProvider(),
     image: new MockImageProvider(),
   };
 }

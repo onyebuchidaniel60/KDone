@@ -1,16 +1,89 @@
 # KDone — AI Handoff
 
-## Current state (2026 iteration — container fix verified end-to-end)
+## Current state (2026 iteration — queue fix verified; OpenRouter provider implemented, key pending)
 
-All V1 phases A–K are implemented. All suites green:
+All V1 phases A—K are implemented. All suites green:
 
-- `pnpm test` — **51/51** (PGlite, no services needed; includes the 6 new
-  container queue-selection drift tests)
+- `pnpm test` — **68/68** (PGlite, no services needed; includes the 6 container
+  queue-selection drift tests and the 17 new OpenRouter provider tests)
 - `pnpm test:e2e` — 1/1 (against Neon via `DATABASE_URL`)
 - `pnpm test:browser` — 8/8
 
-Deployed and **queue-verified live**: https://kdone-uhhh2.vercel.app
-(deployment `dpl_8AxABh3KApt6V98W3BvRQky8LiKV`).
+Deployed: https://kdone-uhhh2.vercel.app (deployment
+`dpl_8GJrVNKprSQiPZXNgzPyUr4j6SGt`, 2026-10-20). Runtime behavior is unchanged
+until a real `OPENROUTER_API_KEY` is configured (mock LLM still active).
+
+### OpenRouter LLM provider implemented (round 2026-10-20)
+
+- `packages/ai/src/openrouter-provider.ts` — `OpenRouterProvider` over the
+  official OpenAI SDK with `baseURL: https://openrouter.ai/api/v1`,
+  `defaultHeaders` (HTTP-Referer `https://kdone-uhhh2.vercel.app`,
+  `X-Title: KDone`), `maxRetries: 0` (the provider owns its retry/backoff):
+  response_format `json_schema` with `strict: true` + OpenRouter
+  `provider.require_parameters`, so generation only routes to endpoints that
+  enforce the schema. Hard errors: `LLMRefusalError` on server refusal,
+  `LLMTruncatedError` on `finish_reason=length`. Retries: 429/5xx/network
+  errors with exponential backoff (250ms→…, jitter), max 3 total attempts;
+  other 4xx fail instantly.
+- `packages/ai/src/select-llm.ts` — `selectLLM()`: OPENROUTER_API_KEY set →
+  OpenRouterProvider, else the deterministic `MockLLMProvider`.
+  `defaultProviders()` picks `OpenRouterResearchProvider` (research task →
+  routed utility model) as the ResearchProvider when OpenRouter is active;
+  the image provider stays mock.
+- **Per-task model routing** (`LLM_MODEL_ROUTES`, explicit model IDs, no
+  aliases): `openai/gpt-5.6-sol` for plan+chapter (WRITING_MODEL),
+  `openai/gpt-5.4` for editorial (EDITORIAL_MODEL), `openai/gpt-5-mini` for
+  research/fact_check/metadata/cover (UTILITY_MODEL). Drift test scans
+  `packages/agents` task literals so a new agent cannot ship without a route.
+- **max_output per task**: chapter 16000, plan 8000, research/fact_check/
+  editorial 4000, metadata/cover 2000.
+- **Cost rates** (`OPENROUTER_MODEL_RATES_USD_PER_1M`, $/1M tokens): 5.6-sol
+  4.00/20.00, 5.4 2.50/15.00, 5-mini 0.25/2.00 (input/out). Provenance records
+  `provider=openrouter`, routed `model`, prompt/completion tokens, and the
+  rate-table cost; an unregistered model records cost 0 plus a console.warn
+  (never silently invented).
+- **Strict schema derivation**: zod-to-json-schema (default target) + a
+  normalizer that strips OpenAI-forbidden keywords (default/min-max/format/
+  $schema/$ref…), forces `additionalProperties:false` + all-required on every
+  object, and collapses nullable into `[type, "null"]` unions. NOTE: the
+  `"openAi"` target of zod-to-json-schema was rejected on purpose — it wraps
+  default-valued fields in anyOf-with-null, which zod itself would then fail
+  to parse at `schema.parse()`.
+- **Unit tests (17)** in `packages/ai/src/openrouter.test.ts` (mocked client):
+  strict request shape (response_format/strict/require_parameters/routed
+  model/max_tokens/seed), refusal, truncation, 429+5xx retry with backoff
+  then success, connection-error exhaust, non-retryable 4xx, non-JSON and
+  schema-invalid content (no retry), fenced-JSON tolerance, per-task model
+  routing + usage, cost math, `selectLLM()`/`defaultProviders()` wiring, and
+  3 drift guards (agent-task → route coverage; closed task universe; nobody
+  but openrouter-provider.ts/select-llm.ts imports the openai SDK).
+- **Integration test** `packages/ai/src/openrouter.integration.test.ts`
+  (excluded from the default suite; run via
+  `pnpm test:repro packages/ai/src/openrouter.integration.test.ts` with
+  `OPENROUTER_INTEGRATION=1`). **NOT RUN YET — blocked on a real API key.**
+- **Key handling**: `.env.example` documents `OPENROUTER_API_KEY=`. The
+  `.env.worker` entry exists but is **empty** (placeholder). There is
+  currently **no real OpenRouter key in the workspace**, so: the worker runs
+  the mock fallback (restarted on the new dist, healthy), and
+  `OPENROUTER_API_KEY` has **not** been added to Vercel production. Wiring
+  steps for the key holder (never commit or echo the value):
+  1. paste the key into `.env.worker` on the worker host (and `.env.local`
+     for local runs), restart `pnpm --filter worker dev`;
+  2. `vercel env add OPENROUTER_API_KEY production --scope uhhh2` (CLI
+     prompt, paste key);
+  3. `vercel deploy --prod --scope uhhh2` **from the repo root** (deploying
+     from `apps/web` links a fresh per-directory upload with no lockfile and
+     Vercel falls back to npm, which fails with
+     `EUNSUPPORTEDPROTOCOL workspace:*`; transient `fetch failed` mid-build
+     is a known retry case);
+  4. only then run the integration test and one small research job against
+     the live URL to exercise the real path end-to-end.
+- **Known scope limitation (do not "fix" silently)**: `editorialAgent` /
+  `factCheckAgent` still pass only counts/titles — no chapter prose — into
+  the LLM context, and the provider prompts explicitly instruct the model to
+  return empty lists rather than invent issues without evidence. Real-model
+  editorial value is therefore structurally limited until the agents thread
+  chapter content through (`docs/IMPLEMENTATION_PLAN.md` Phase A*K gap).
 
 ### What changed since commit `940db1e` (handler extraction)
 
@@ -108,7 +181,7 @@ Deployed and **queue-verified live**: https://kdone-uhhh2.vercel.app
 | Area | State |
 |---|---|
 | Database | Real Postgres schema/migrations. Dev needs Postgres; tests use PGlite. |
-| LLM / research / image | **Mocked.** Deterministic, schema-valid, seed-based. |
+| LLM / research | **Mocked by default** (deterministic, schema-valid, seed-based). Real path implemented: `OpenRouterProvider` + `OpenRouterResearchProvider` selected whenever `OPENROUTER_API_KEY` is set; not yet exercised (no key yet). |
 | Storage | **Mocked** in-memory. No S3/MinIO client yet. |
 | Queue | **Real BullMQ in prod**; in-memory in tests. |
 | Auth | Credentials + JWT for local dev. OAuth not configured. |
@@ -125,7 +198,7 @@ blocker plus the live end-to-end proof of the queue path.
 
 | Command | Needs | Result |
 |---|---|---|
-| pnpm test | nothing (PGlite) | 45/45 |
+| pnpm test | nothing (PGlite) | 68/68 |
 | pnpm test:e2e | DATABASE_URL (real Postgres) | 1/1 |
 | pnpm test:browser | DATABASE_URL + Chromium cache | 8/8 |
 
@@ -254,10 +327,16 @@ pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
 ## Deployment status (2026 round)
 
 - **Deployed URL:** https://kdone-uhhh2.vercel.app (Vercel project `uhhh2/kdone`)
-- **Latest production deployment:** `dpl_8AxABh3KApt6V98W3BvRQky8LiKV`
-  (2026-10-19) — contains the container `selectQueue()` fix, the handler
-  extraction, `prepare: false` standardization and the `findStaleRunning`
-  Date-binding fix. Queue path verified end-to-end (see "Current state").
+- **Latest production deployment:** `dpl_8GJrVNKprSQiPZXNgzPyUr4j6SGt`
+  (2026-10-20) — adds the OpenRouter provider (`packages/ai` deps). Runtime
+  behavior unchanged while `OPENROUTER_API_KEY` is unset (mock fallback).
+  Previous deployment `dpl_8AxABh3KApt6V98W3BvRQky8LiKV` (2026-10-19)
+  contained the container `selectQueue()` fix, the handler extraction,
+  `prepare: false` standardization and the `findStaleRunning`
+  Date-binding fix; queue path verified end-to-end (see "Current state").
+  **Deploy must be run from the repo root** — a fresh link from `apps/web`
+  uploads only that directory (no lockfile) and Vercel then installs with
+  npm, failing on `workspace:*` (EUNSUPPORTEDPROTOCOL).
 - **Migrations applied** to Neon (production DB).
 - **Env vars set (production scope, names only):** DATABASE_URL, AUTH_SECRET,
   AUTH_TRUST_HOST, QUEUE_DRIVER, NODE_ENV, AUTH_URL, NEXT_PUBLIC_APP_URL,
