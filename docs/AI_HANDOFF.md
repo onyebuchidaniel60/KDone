@@ -1,6 +1,6 @@
 # KDone — AI Handoff
 
-## Current state (2026 iteration — queue fix verified; OpenRouter provider implemented, key pending)
+## Current state (2026 iteration — queue fix verified; real LLM researching live)
 
 All V1 phases A—K are implemented. All suites green:
 
@@ -10,10 +10,14 @@ All V1 phases A—K are implemented. All suites green:
 - `pnpm test:browser` — 8/8
 
 Deployed: https://kdone-uhhh2.vercel.app (deployment
-`dpl_8GJrVNKprSQiPZXNgzPyUr4j6SGt`, 2026-10-20). Runtime behavior is unchanged
-until a real `OPENROUTER_API_KEY` is configured (mock LLM still active).
+`dpl_ERzBvQTTBXTwFLpgnPtS137BjcE1`, 2026-10-20). `OPENROUTER_API_KEY` **is
+configured** in `.env.worker` and in Vercel production, so the local worker
+and the web app select the real provider. **Real LLM research is verified
+end-to-end live** (research task only — see the OpenRouter section below).
+Writing/QA/metadata/cover run through the same provider code but have only
+unit-test coverage so far.
 
-### OpenRouter LLM provider implemented (round 2026-10-20)
+### OpenRouter LLM provider implemented and verified on research (round 2026-10-20)
 
 - `packages/ai/src/openrouter-provider.ts` — `OpenRouterProvider` over the
   official OpenAI SDK with `baseURL: https://openrouter.ai/api/v1`,
@@ -60,30 +64,55 @@ until a real `OPENROUTER_API_KEY` is configured (mock LLM still active).
 - **Integration test** `packages/ai/src/openrouter.integration.test.ts`
   (excluded from the default suite; run via
   `pnpm test:repro packages/ai/src/openrouter.integration.test.ts` with
-  `OPENROUTER_INTEGRATION=1`). **NOT RUN YET — blocked on a real API key.**
-- **Key handling**: `.env.example` documents `OPENROUTER_API_KEY=`. The
-  `.env.worker` entry exists but is **empty** (placeholder). There is
-  currently **no real OpenRouter key in the workspace**, so: the worker runs
-  the mock fallback (restarted on the new dist, healthy), and
-  `OPENROUTER_API_KEY` has **not** been added to Vercel production. Wiring
-  steps for the key holder (never commit or echo the value):
-  1. paste the key into `.env.worker` on the worker host (and `.env.local`
-     for local runs), restart `pnpm --filter worker dev`;
+  `OPENROUTER_INTEGRATION=1` and `OPENROUTER_API_KEY` sourced from
+  `.env.worker`). **PASSED against the real API (2026-10-20):** routed model
+  `openai/gpt-5-mini`, strict structured outputs enforced — the response was
+  constrained JSON that validated against `researchOutputSchema` on the first
+  pass with zero repair (no fenced-JSON unwrap needed, no retry), 1 source /
+  5 findings, 22.9 s runtime, 526 input / 2065 output tokens, estimated cost
+  **$0.0042615** from the rate table.
+- **Live research job verified end-to-end (2026-10-20, real provider).**
+  Register → sign-in at the live URL → book "AI for Small Business Accounting"
+  (`75975c87-2d8c-4354-9e3b-914179b6306f`) → `POST /api/books/:id/research`
+  202 QUEUED (job `05bc63ec-ab87-4fc5-8feb-ed85b706561e`) → local worker
+  pickup → SUCCEEDED on attempt 1 → RESEARCH_READY visible on the live URL in
+  **~36 s wall** (202 at ~2 s, RESEARCHING by ~10 s, READY by ~36 s; the Neon
+  `started_at`/`completed_at` columns write ~30 s of execution and show small
+  negative queue offsets because Vercel writes `created_at` and the laptop
+  worker writes `started_at` from different clocks — trust the wall times).
+  `agent_runs` row: `provider=openrouter`, `model=openai/gpt-5-mini`,
+  533 input / 1881 output tokens, estimated cost **$0.00389525**,
+  `duration_ms=28099`, SUCCEEDED. Research persisted: 3 sources (sba.gov,
+  aicpa.org, intuit.com — real entities, not example.test), 5 findings (3
+  source-backed, 2 unbacked gap/barrier findings honestly kept without a
+  source), market + reader-problem summaries, status COMPLETE.
+- **Key handling (RESOLVED)**: `.env.example` documents `OPENROUTER_API_KEY=`.
+  The real key is in `.env.worker` (worker restarted, so it selected the
+  provider) and was added to Vercel production via
+  `vercel env add OPENROUTER_API_KEY production --scope uhhh2` (piped from
+  `.env.worker`, value never echoed or logged). The value was never printed
+  to any log, terminal, or commit. If the key rotates:
+  1. replace it in `.env.worker`, restart `pnpm --filter worker dev`;
   2. `vercel env add OPENROUTER_API_KEY production --scope uhhh2` (CLI
      prompt, paste key);
   3. `vercel deploy --prod --scope uhhh2` **from the repo root** (deploying
      from `apps/web` links a fresh per-directory upload with no lockfile and
      Vercel falls back to npm, which fails with
      `EUNSUPPORTEDPROTOCOL workspace:*`; transient `fetch failed` mid-build
-     is a known retry case);
-  4. only then run the integration test and one small research job against
-     the live URL to exercise the real path end-to-end.
-- **Known scope limitation (do not "fix" silently)**: `editorialAgent` /
-  `factCheckAgent` still pass only counts/titles — no chapter prose — into
-  the LLM context, and the provider prompts explicitly instruct the model to
-  return empty lists rather than invent issues without evidence. Real-model
-  editorial value is therefore structurally limited until the agents thread
-  chapter content through (`docs/IMPLEMENTATION_PLAN.md` Phase A*K gap).
+     is a known retry case).
+- **P1 — editorial/fact-check must receive chapter prose before the first
+  real-book run.** `editorialAgent` / `factCheckAgent` still pass only
+  counts/titles — no chapter prose — into the LLM context, and the provider
+  prompts explicitly instruct the model to return empty lists rather than
+  invent issues without evidence (fabrication-avoidance, by design). With a
+  real model this makes editorial pass-through close to useless: it cannot
+  report genuine readability/consistency issues and fact-check cannot verify
+  any claim against actual text. Fix path: thread chapter content (and, for
+  fact-check, the retained research findings) through the agent contexts and
+  put it in the user prompt; keep the empty-list instruction as the fallback
+  for missing context. This is a **P1 item in front of the first real-book
+  run** — do not start one before this ships (`docs/IMPLEMENTATION_PLAN.md`
+  Phase A* K gap).
 
 ### What changed since commit `940db1e` (handler extraction)
 
@@ -145,7 +174,10 @@ until a real `OPENROUTER_API_KEY` is configured (mock LLM still active).
    picked it up via Upstash → SUCCEEDED on attempt 1 (mock research agent,
    2 sources / 2 findings) → live URL shows `RESEARCH_READY` after refresh.
    Job `8e0d5805-0325-4be2-950e-671e7ac9667f`, book
-   `6037ebd2-d8a5-4c7f-860c-11616ea76a1f`.
+   `6037ebd2-d8a5-4c7f-860c-11616ea76a1f`. Superseded on 2026-10-20 by the
+   same flow with the **real OpenRouter provider** (see "Live research job
+   verified end-to-end" above): job `05bc63ec…`, book `75975c87…`, 3 real
+   sources / 5 findings, $0.00389525.
 
 ## Definition of Done status
 
@@ -181,7 +213,7 @@ until a real `OPENROUTER_API_KEY` is configured (mock LLM still active).
 | Area | State |
 |---|---|
 | Database | Real Postgres schema/migrations. Dev needs Postgres; tests use PGlite. |
-| LLM / research | **Mocked by default** (deterministic, schema-valid, seed-based). Real path implemented: `OpenRouterProvider` + `OpenRouterResearchProvider` selected whenever `OPENROUTER_API_KEY` is set; not yet exercised (no key yet). |
+| LLM / research | Real path selected whenever `OPENROUTER_API_KEY` is set (OpenRouterProvider + OpenRouterResearchProvider with strict structured outputs) — **verified live for research** (job `05bc63ec…`, 3 real sources / 5 findings, $0.00389525, 28 s exec). Writing/QA/metadata/cover go through the same provider + prompts with unit-test coverage only, no live run yet. Mock providers remain the fallback with no key. |
 | Storage | **Mocked** in-memory. No S3/MinIO client yet. |
 | Queue | **Real BullMQ in prod**; in-memory in tests. |
 | Auth | Credentials + JWT for local dev. OAuth not configured. |
@@ -327,13 +359,15 @@ pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
 ## Deployment status (2026 round)
 
 - **Deployed URL:** https://kdone-uhhh2.vercel.app (Vercel project `uhhh2/kdone`)
-- **Latest production deployment:** `dpl_8GJrVNKprSQiPZXNgzPyUr4j6SGt`
-  (2026-10-20) — adds the OpenRouter provider (`packages/ai` deps). Runtime
-  behavior unchanged while `OPENROUTER_API_KEY` is unset (mock fallback).
-  Previous deployment `dpl_8AxABh3KApt6V98W3BvRQky8LiKV` (2026-10-19)
-  contained the container `selectQueue()` fix, the handler extraction,
-  `prepare: false` standardization and the `findStaleRunning`
-  Date-binding fix; queue path verified end-to-end (see "Current state").
+- **Latest production deployment:** `dpl_ERzBvQTTBXTwFLpgnPtS137BjcE1`
+  (2026-10-20) — adds the OpenRouter provider with
+  `OPENROUTER_API_KEY` set in production (real provider active). This
+  deployment's live research job verified the real-LLM path end-to-end (see
+  "Current state"). Earlier: `dpl_8GJrVNKprSQiPZXNgzPyUr4j6SGt` (2026-10-20,
+  provider code without the key) and `dpl_8AxABh3KApt6V98W3BvRQky8LiKV`
+  (2026-10-19) contained the container `selectQueue()` fix, the handler
+  extraction, `prepare: false` standardization and the `findStaleRunning`
+  Date-binding fix; queue path verified end-to-end.
   **Deploy must be run from the repo root** — a fresh link from `apps/web`
   uploads only that directory (no lockfile) and Vercel then installs with
   npm, failing on `workspace:*` (EUNSUPPORTEDPROTOCOL).
@@ -341,7 +375,9 @@ pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
 - **Env vars set (production scope, names only):** DATABASE_URL, AUTH_SECRET,
   AUTH_TRUST_HOST, QUEUE_DRIVER, NODE_ENV, AUTH_URL, NEXT_PUBLIC_APP_URL,
   REDIS_URL (Upstash — set as of the laptop-worker round; drive byte-identical
-  with `.env.worker`), plus the S3_/R2 variables listed under Storage below.
+  with `.env.worker`), OPENROUTER_API_KEY (added 2026-10-20, stored as Secret,
+  value piped from `.env.worker`, never echoed), plus the S3_/R2 variables
+  listed under Storage below.
 - **AUTH_DEV_LOGIN is not set in Vercel** (verified via `vercel env ls production`).
 
 ### Worker: laptop-hosted (no Render)
