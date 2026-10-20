@@ -123,16 +123,38 @@ export async function writingAgent(
 
 /* -------------------------------------------------------------- Editorial */
 
+/**
+ * One chapter's editorial input. `content` is the current draft's full prose,
+ * or an empty string when the chapter has no draft yet; `objective` comes
+ * from the approved plan (empty when the plan row lacks one). Agents must
+ * never invent issues from absence — an empty draft yields no claims.
+ */
+export interface EditorialChapterInput {
+  ordinal: number;
+  title: string;
+  content: string;
+  objective: string;
+}
+
 export async function editorialAgent(
   llm: LLMProvider,
   ctx: AgentContext,
-  chapters: Array<{ ordinal: number; title: string; content: string }>,
+  chapters: EditorialChapterInput[],
 ): Promise<AgentResult<{ issues: Issue[] }>> {
   const { output, usage } = await llm.generate({
     task: "editorial",
     seed: `${ctx.bookProjectId}:editorial`,
     schema: editorialOutputSchema,
-    context: { chapterCount: chapters.length, titles: chapters.map((c) => c.title).join(", ") },
+    context: {
+      chapterCount: chapters.length,
+      titles: chapters.map((c) => c.title).join(", "),
+      chapters: chapters.map((c) => ({
+        ordinal: c.ordinal,
+        title: c.title,
+        objective: c.objective,
+        content: c.content,
+      })),
+    },
   });
   return { output, usage, generated: true };
 }
@@ -193,17 +215,43 @@ export function structuralChecks(
   return issues;
 }
 
+/**
+ * Retained research evidence for the fact-check agent: the sources that
+ * survived review (with their database ids so claims map to real rows) and
+ * every retained finding tagged with the source that backs it (null when
+ * the finding is sourceless). Empty evidence means no claims to check.
+ */
+export interface FactCheckEvidenceInput {
+  sources: Array<{ id: string; url: string; title: string; sourceName: string }>;
+  findings: Array<{
+    findingType: string;
+    statement: string;
+    confidence: string;
+    sourceId: string | null;
+  }>;
+}
+
 export async function factCheckAgent(
   llm: LLMProvider,
   ctx: AgentContext,
-  chapters: Array<{ ordinal: number; content: string }>,
-  sourceCount: number,
+  chapters: Array<{ ordinal: number; title: string; content: string }>,
+  evidence: FactCheckEvidenceInput,
 ): Promise<AgentResult<ReturnType<typeof factCheckOutputSchema.parse>>> {
   const { output, usage } = await llm.generate({
     task: "fact_check",
-    seed: `${ctx.bookProjectId}:factcheck:${sourceCount}`,
+    seed: `${ctx.bookProjectId}:factcheck:${evidence.sources.length}`,
     schema: factCheckOutputSchema,
-    context: { chapterCount: chapters.length, sourceCount },
+    context: {
+      chapterCount: chapters.length,
+      sourceCount: evidence.sources.length,
+      chapters: chapters.map((c) => ({
+        ordinal: c.ordinal,
+        title: c.title,
+        content: c.content,
+      })),
+      retainedSources: evidence.sources,
+      findings: evidence.findings,
+    },
   });
   return { output, usage, generated: true };
 }

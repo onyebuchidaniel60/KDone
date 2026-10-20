@@ -206,47 +206,39 @@ export class MockLLMProvider implements LLMProvider {
         });
       }
 
-      case "editorial":
-        return editorialOutputSchema.parse({
-          issues: [
-            {
-              severity: "warning" as const,
-              issueType: "readability",
-              message: "Some sentences are long; consider splitting for mobile reading.",
-              chapterOrdinal: 1,
-              location: null,
-              proposedFix: "Split sentences over 25 words.",
-            },
-            {
-              severity: "suggestion" as const,
-              issueType: "structure",
-              message: "Consider a short transition paragraph between sections.",
-              chapterOrdinal: null,
-              location: null,
-              proposedFix: null,
-            },
-          ],
-        });
+      case "editorial": {
+        const chapters = Array.isArray(ctx.chapters) ? (ctx.chapters as unknown as Array<Record<string, unknown>>) : [];
+        const drafted = chapters
+          .filter((c) => typeof c.content === "string" && (c.content as string).trim().length > 0)
+          .map((c) => ({ ordinal: typeof c.ordinal === "number" ? c.ordinal : 0, content: c.content as string }));
+        return editorialOutputSchema.parse({ issues: repeatedSentenceIssues(drafted) });
+      }
 
-      case "fact_check":
-        return factCheckOutputSchema.parse({
-          claims: [
-            {
-              claim: `${audience} currently lacks a structured approach to ${topic}.`,
-              result: "verified" as const,
-              rationale: "Supported by the retained reference source.",
-              sourceIndex: 0,
-              chapterOrdinal: 1,
-            },
-            {
-              claim: `Adoption of ${topic} practices has grown sharply in recent years.`,
-              result: "unsupported" as const,
-              rationale: "No retained source establishes this trend.",
-              sourceIndex: null,
-              chapterOrdinal: 2,
-            },
-          ],
-        });
+      case "fact_check": {
+        const chapters = Array.isArray(ctx.chapters) ? (ctx.chapters as unknown as Array<Record<string, unknown>>) : [];
+        const sources = Array.isArray(ctx.retainedSources) ? (ctx.retainedSources as unknown as Array<Record<string, unknown>>) : [];
+        const findings = Array.isArray(ctx.findings) ? (ctx.findings as unknown as Array<Record<string, unknown>>) : [];
+        const hasProse = chapters.some((c) => typeof c.content === "string" && (c.content as string).trim().length > 0);
+        if (!hasProse) return factCheckOutputSchema.parse({ claims: [] });
+
+        const claims = [];
+        for (const finding of findings) {
+          const statement = typeof finding.statement === "string" ? finding.statement : "";
+          const sourceId = typeof finding.sourceId === "string" ? finding.sourceId : null;
+          if (!statement.trim() || !sourceId) continue;
+          const matchIndex = sources.findIndex((s) => s.id === sourceId);
+          if (matchIndex < 0) continue;
+          const source = sources[matchIndex]!;
+          claims.push({
+            claim: statement,
+            result: "verified" as const,
+            rationale: `Retained source "${String(source.sourceName ?? source.title ?? "Unknown")}" backs this finding.`,
+            sourceIndex: matchIndex,
+            chapterOrdinal: null,
+          });
+        }
+        return factCheckOutputSchema.parse({ claims });
+      }
 
       case "metadata":
         return metadataOutputSchema.parse({
@@ -292,6 +284,39 @@ function coverSvg(title: string, subtitle: string, palette: string[], seed: stri
     `<text x="800" y="1280" font-family="Georgia, serif" font-size="52" fill="${esc(accent)}" text-anchor="middle">${esc(subtitle.slice(0, 52))}</text>`,
     `</svg>`,
   ].join("");
+}
+
+/**
+ * Mock-editorial heuristic: flag a sentence (>= 12 normalized characters)
+ * that appears at least three times within one chapter's draft. Deterministic
+ * and derived only from the prose supplied in the context.
+ */
+function repeatedSentenceIssues(chapters: Array<{ ordinal: number; content: string }>) {
+  const issues = [];
+  for (const chapter of chapters) {
+    const counts = new Map<string, { count: number; sample: string }>();
+    for (const raw of chapter.content.split(/(?<=[.!?])\s+/)) {
+      const sample = raw.replace(/^#+\s*/, "").trim();
+      const key = sample.toLowerCase().replace(/[^a-z0-9 ]+/g, "").replace(/\s+/g, " ").trim();
+      if (key.length < 12) continue;
+      const prior = counts.get(key);
+      if (prior) prior.count += 1;
+      else counts.set(key, { count: 1, sample });
+    }
+    for (const { count, sample } of counts.values()) {
+      if (count >= 3) {
+        issues.push({
+          severity: "warning" as const,
+          issueType: "repetition",
+          message: `Chapter ${chapter.ordinal} repeats the sentence "${sample.slice(0, 80)}" ${count} times.`,
+          chapterOrdinal: chapter.ordinal >= 1 ? chapter.ordinal : null,
+          location: null,
+          proposedFix: "Vary the repeated sentence or restructure the paragraph.",
+        });
+      }
+    }
+  }
+  return issues;
 }
 
 export class MockResearchProvider implements ResearchProvider {

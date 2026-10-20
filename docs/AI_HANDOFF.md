@@ -100,19 +100,27 @@ unit-test coverage so far.
      Vercel falls back to npm, which fails with
      `EUNSUPPORTEDPROTOCOL workspace:*`; transient `fetch failed` mid-build
      is a known retry case).
-- **P1 — editorial/fact-check must receive chapter prose before the first
-  real-book run.** `editorialAgent` / `factCheckAgent` still pass only
-  counts/titles — no chapter prose — into the LLM context, and the provider
-  prompts explicitly instruct the model to return empty lists rather than
-  invent issues without evidence (fabrication-avoidance, by design). With a
-  real model this makes editorial pass-through close to useless: it cannot
-  report genuine readability/consistency issues and fact-check cannot verify
-  any claim against actual text. Fix path: thread chapter content (and, for
-  fact-check, the retained research findings) through the agent contexts and
-  put it in the user prompt; keep the empty-list instruction as the fallback
-  for missing context. This is a **P1 item in front of the first real-book
-  run** — do not start one before this ships (`docs/IMPLEMENTATION_PLAN.md`
-  Phase A* K gap).
+- **P1 RESOLVED — editorial/fact-check now receive chapter prose.**
+  `editorialAgent(llm, ctx, chapters: EditorialChapterInput[])` sends, per
+  chapter, `ordinal` + `title` + the current draft's **full `content`** +
+  the **plan `objective`** (handler threads objectives from the approved
+  plan; empty string when the plan row lacks one). `factCheckAgent(llm, ctx,
+  chapters, evidence: FactCheckEvidenceInput)` sends each chapter's
+  `ordinal` + `title` + full draft `content`, plus the **retained research
+  sources with their database `id`s** (url/title/sourceName) and every
+  **retained finding tagged with the `sourceId`** of the source backing it
+  (`null` when sourceless) — so claims map to real source rows, not just a
+  count. Chapters without a draft are still present with empty `content`
+  (handler loads all planned chapters via a LEFT JOIN on `chapter_drafts`),
+  and both agent prompts keep the empty-list instruction for anything not
+  evidenced in the supplied prose — no fabrication from absence. Output
+  schemas unchanged. Mock provider is now context-aware for tests
+  (`packages/agents/src/editorial.test.ts`: repeated-sentence draft → ≥1
+  `repetition` issue; no draft → zero issues; clean draft → zero issues),
+  so the whole suite is 72/72. The OpenRouter prompt text for the two tasks
+  was updated to match the new input contract (selection/routing/schema
+  derivation untouched). Do not start the first real-book run before a
+  live QA/agent pass on real prose.
 
 ### What changed since commit `940db1e` (handler extraction)
 
@@ -477,6 +485,22 @@ handler drift test in `packages/handlers/src/handlers.test.ts`. The remaining
 half of that failure was the container hardcoding `InMemoryQueue` instead of
 calling `selectQueue()` — also fixed and verified; see "Current state" at the
 top of this file.
+
+### RESOLVED: stray `generation_jobs` row `0ed39846…` deleted (2026-10-20)
+
+A pre-key-test research job (`0ed39846-3443-43c5-b0cb-62eb31b5d40c`, book
+`2ab07578-ec15-46ae-b195-ba1cf3b641be`) sat in Neon as `QUEUED` (attempts 0)
+since 2026-10-17 and never processed. The stale-job reaper cannot help here:
+`Worker.recoverStaleJobs()` only re-queues jobs whose DB row is `RUNNING`
+beyond the stale threshold (`JobStore.findStaleRunning` filters
+`status = "RUNNING"`), so a QUEUED row whose BullMQ delivery was lost is dead
+forever. Verified no Redis key anywhere referenced the id (full `SCAN` of the
+queue, 26 keys, zero hits), so no lingering BullMQ delivery could later pick
+it up, then deleted the row directly against Neon with a guard
+(`status = 'QUEUED' AND attempts = 0`), and confirmed zero rows remain. The
+book row itself was left untouched. Note for a future iteration: QUEUED rows
+abandoned before BullMQ delivery could use a small max-age reaper if this
+ever recurs.
 
 ### Known log noise (cleanup candidate)
 

@@ -830,12 +830,29 @@ async editChapter(chapterId: string, userId: string, content?: string) {
       const bookId = (await this.bookIdForJob(job.id))!;
       const book = await this.loadBook(bookId);
       const ctx = this.ctx(book!, bookId);
-      const research = await this.loadResearchOutput(bookId);
+      const evidence = await this.loadResearchEvidence(bookId);
+      const prose = await this.loadChapterProse(bookId);
       const chapterRows = await this.loadDraftChapters(bookId);
 
+      const objectives = new Map<number, string>();
+      try {
+        const plan = await this.loadPlanOutput(bookId);
+        for (const pc of plan.chapters) objectives.set(pc.ordinal, pc.objective);
+      } catch {
+        // No approved plan: agents still receive titles/prose, no objectives.
+      }
+
+      const editorialChapters = prose.map((c) => ({
+        ordinal: c.ordinal,
+        title: c.title,
+        content: c.content,
+        objective: objectives.get(c.ordinal) ?? "",
+      }));
+      const factCheckChapters = prose.map((c) => ({ ordinal: c.ordinal, title: c.title, content: c.content }));
+
       const structural = structuralChecks(chapterRows, await this.chapterCount(bookId));
-      const editorial = await editorialAgent(this.llm, ctx, chapterRows);
-      const factCheck = await factCheckAgent(this.llm, ctx, chapterRows, research.sources.length);
+      const editorial = await editorialAgent(this.llm, ctx, editorialChapters);
+      const factCheck = await factCheckAgent(this.llm, ctx, factCheckChapters, evidence);
       const unsupported = factCheck.output.claims.filter((c) => c.result === "unsupported").length;
       const consistency = consistencyChecks(chapterRows, unsupported);
 
@@ -989,6 +1006,56 @@ async editChapter(chapterId: string, userId: string, content?: string) {
       findings: findings.map((f) => ({ findingType: f.findingType ?? "note", statement: f.statement, confidence: (f.confidence as "low" | "medium" | "high") ?? "medium", sourceIndex: null })),
       angles: [],
     });
+  }
+
+  /**
+   * Retained research evidence for the fact-check agent: every source with
+   * its database id (so claims map to real rows, not just a count) and every
+   * finding tagged with the id of the source that backs it (null when the
+   * finding is sourceless).
+   */
+  private async loadResearchEvidence(bookId: string) {
+    const [project] = await this.db
+      .select({ id: researchProjects.id })
+      .from(researchProjects)
+      .where(eq(researchProjects.bookProjectId, bookId))
+      .orderBy(desc(researchProjects.createdAt)).limit(1);
+    if (!project) {
+      throw errors.precondition("Research has not been generated yet");
+    }
+    const sources = await this.db
+      .select({ id: researchSources.id, url: researchSources.url, title: researchSources.title, sourceName: researchSources.sourceName })
+      .from(researchSources)
+      .where(eq(researchSources.researchProjectId, project.id!));
+    const findings = await this.db
+      .select({ findingType: researchFindings.findingType, statement: researchFindings.statement, confidence: researchFindings.confidence, sourceId: researchFindings.sourceId })
+      .from(researchFindings)
+      .where(eq(researchFindings.researchProjectId, project.id!));
+
+    return {
+      sources: sources.map((s) => ({ id: s.id, url: s.url ?? "", title: s.title ?? "Untitled", sourceName: s.sourceName ?? "Unknown" })),
+      findings: findings.map((f) => ({
+        findingType: f.findingType ?? "note",
+        statement: f.statement,
+        confidence: (f.confidence as "low" | "medium" | "high") ?? "medium",
+        sourceId: f.sourceId ?? null,
+      })),
+    };
+  }
+
+  /**
+   * Every planned chapter with its current draft prose. Chapters without a
+   * draft appear with empty content — agents must see the full chapter list
+   * but must never fabricate issues from a missing draft.
+   */
+  private async loadChapterProse(bookProjectId: string) {
+    const rows = await this.db
+      .select({ ordinal: chapters.ordinal, title: chapters.title, content: chapterDrafts.content })
+      .from(chapters)
+      .leftJoin(chapterDrafts, eq(chapters.currentDraftId, chapterDrafts.id))
+      .where(eq(chapters.bookProjectId, bookProjectId))
+      .orderBy(chapters.ordinal);
+    return rows.map((r) => ({ ordinal: r.ordinal, title: r.title ?? `Chapter ${r.ordinal}`, content: r.content ?? "" }));
   }
 
   private async loadPlanOutput(bookId: string): Promise<PlanOutput> {

@@ -326,18 +326,19 @@ function chapterPrompt(ctx: Record<string, unknown>): string {
 
 function editorialPrompt(ctx: Record<string, unknown>): string {
   return [
-    `You are doing a structural editorial pass over a manuscript. You are NOT shown full chapter prose; you only know chapter count (${String(ctx.chapterCount)}) and titles (${String(ctx.titles)}).`,
-    "Evaluate only what is supported by that information plus general editorial principles for Kindle books.",
+    `You are doing an editorial pass over a manuscript. Each planned chapter is listed in the context with its title, its plan objective and its current draft content (full prose; empty when no draft exists yet).`,
+    "Ground every issue in the supplied prose or plan text: quote or locate it (chapterOrdinal + what to change). Evaluate structure, readability, repetition and consistency for a Kindle reader.",
     "For every issue you report: issueType, severity (critical/warning/suggestion), a concrete message, and proposedFix when you can give a specific one.",
-    "If the chapter count and titles alone do not support any concrete issue, return an empty issues array rather than inventing problems.",
+    "If a chapter has no draft content, do not invent issues from its absence. If no chapter gives you a concrete issue, return an empty issues array rather than inventing problems.",
   ].join(" ");
 }
 
 function factCheckPrompt(ctx: Record<string, unknown>): string {
   return [
-    `You are fact-checking a manuscript. You are NOT shown prose; you know chapter count (${String(ctx.chapterCount)}) and that ${String(ctx.sourceCount)} research sources were retained.`,
-    "Only report claims you can actually attribute; you have no prose available, so return an empty claims array instead of fabricating claims.",
-    "For each claim you do report: result must be verified, needs_revision, unsupported, or conflicting, with a rationale explaining why, and sourceIndex only when a retained source truly supports the claim.",
+    `You are fact-checking a manuscript. The context lists each chapter with its full draft content, plus the retained research sources (each with an id, url, title and sourceName) and the retained findings, where each finding carries the sourceId of the source that backs it (or null).`,
+    "Extract specific factual claims from the chapter prose and verify them against the retained sources; sourceIndex must be the 0-based position of the supporting source in the retainedSources list, and null when nothing supports the claim.",
+    "result must be verified, needs_revision, unsupported, or conflicting, with a rationale explaining why.",
+    "Never invent a claim that is not stated in the prose and never invent a source; if no chapter prose contains a specific checkable claim, return an empty claims array.",
   ].join(" ");
 }
 
