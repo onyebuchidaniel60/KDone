@@ -62,15 +62,21 @@ unit-test coverage so far.
   3 drift guards (agent-task → route coverage; closed task universe; nobody
   but openrouter-provider.ts/select-llm.ts imports the openai SDK).
 - **Integration test** `packages/ai/src/openrouter.integration.test.ts`
-  (excluded from the default suite; run via
-  `pnpm test:repro packages/ai/src/openrouter.integration.test.ts` with
-  `OPENROUTER_INTEGRATION=1` and `OPENROUTER_API_KEY` sourced from
-  `.env.worker`). **PASSED against the real API (2026-10-20):** routed model
-  `openai/gpt-5-mini`, strict structured outputs enforced — the response was
-  constrained JSON that validated against `researchOutputSchema` on the first
-  pass with zero repair (no fenced-JSON unwrap needed, no retry), 1 source /
-  5 findings, 22.9 s runtime, 526 input / 2065 output tokens, estimated cost
-  **$0.0042615** from the rate table.
+  (excluded from the default suite). Working command:
+  `pnpm test:integration` (root alias added 2026-10-22) or
+  `pnpm test:repro packages/ai/src/openrouter.integration.test.ts`; the
+  `@kdone/ai`-scoped `pnpm --filter @kdone/ai test:integration` also works.
+  The gate is `OPENROUTER_INTEGRATION=1` with `OPENROUTER_API_KEY` sourced
+  from `.env.worker` — without the gate the suite is collected and skipped
+  (exit 0), so it is safe in plain `pnpm test` checkouts. Do NOT rewrite this
+  to a bare `vitest run <file>` — the repro config's include paths are
+  repo-root-relative and the default config excludes `*.integration.test.ts`.
+  **PASSED against the real API (2026-10-20 and again 2026-10-22 via the
+  alias):** routed model `openai/gpt-5-mini`, strict structured outputs
+  enforced — the response was constrained JSON that validated against
+  `researchOutputSchema` on the first pass with zero repair (no fenced-JSON
+  unwrap needed, no retry); 2026-10-22 run: 2 sources / 5 findings, 22.7 s,
+  526 input / 1987 output tokens, estimated cost **$0.0041055**.
 - **Live research job verified end-to-end (2026-10-20, real provider).**
   Register → sign-in at the live URL → book "AI for Small Business Accounting"
   (`75975c87-2d8c-4354-9e3b-914179b6306f`) → `POST /api/books/:id/research`
@@ -504,10 +510,10 @@ ever recurs.
 
 ### Known log noise (cleanup candidate)
 
-`packages/jobs/src/worker.ts` still contains leftover debug lines
-(`console.error("WX< 1 done")`, `WX< 2 done`, `WX< 3a findById ok`, `WX<
-3 done`) from the earlier Neon-durability debugging. They appear in every
-job execution's worker log. They are harmless — and were used as pickup /
-success evidence during the 2026-10-19 e2e — but they should be replaced by
-structured per-job lifecycle logs (pickup started, succeeded, transition
-applied) in a cleanup iteration.
+RESOLVED (2026-10-22): the leftover debug lines in
+`packages/jobs/src/worker.ts` (`WX< 1 done` … `WX< 3 done`) are removed and
+replaced by nothing — job pickup/success evidence now comes from the normal
+worker + job lifecycle logs. The worker was restarted after the fix and
+still registered 7 handlers and processed a live research job end-to-end;
+the full unit suite (72/72) passes. Future work should add structured
+per-job lifecycle logs (pickup started, succeeded, transition applied).

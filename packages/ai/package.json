@@ -14,7 +14,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:integration": "vitest run src/openrouter.integration.test.ts"
+    "test:integration": "vitest run --root ../../ --config vitest.repro.config.ts src/openrouter.integration.test.ts"
   },
   "dependencies": {
     "@kdone/shared": "workspace:*",
