@@ -127,6 +127,53 @@ unit-test coverage so far.
   was updated to match the new input contract (selection/routing/schema
   derivation untouched). Do not start the first real-book run before a
   live QA/agent pass on real prose.
+- **First real-model QA pass verified end-to-end (2026-10-22).**
+  Book "AI Bookkeeping, One Robot at a Time"
+  (`7c8a5446-9f5f-4f58-b351-f63f81a400bf`, topic "AI for small business
+  accounting", desiredLength 1200): DRAFT → RESEARCHING (37 s) → PLANNING
+  (12 s; 6 chapters with ~200-target-word objectives summing to 1200) →
+  WRITING (six jobs, 48–58 s each) → EDITING via `EDITING_START` on
+  assembly → QA job `b548fa99-80a7-4fb1-a348-b381283872a7` (64 s). All 11
+  transitions logged through the central state machine; canonical memory
+  costs: research $0.00541525 (gpt-5-mini 533/2641), planning $0.013552
+  (gpt-5.6-sol 808/516), six writing jobs $0.417520 total
+  (gpt-5.6-sol, 915–1402 in / 2857–3535 out per chapter).
+  Editorial on the real prose returned **16 issues (0 critical, 4 warning,
+  12 suggestion)** — the warnings are concrete and quotable (a literal
+  capitalization defect "6. verify the accounts again.", missing
+  "Chapter 2:/3:" prefixes, TOC-consistency from the merged title list).
+  Fact-check (gpt-5-mini) extracted **7 claims from the chapter prose** and
+  marked all 7 "verified" with rationales naming the retained sources
+  (IRS, QuickBooks, Xero) — zero unsupported. **Prose is flowing into both
+  agents — GO for the full real-book run.** Recorded QA AgentRun:
+  `openai/gpt-5-mini` 18,885 in / 3,046 out, **$0.01081325**, 63.2 s.
+  - **State-machine finding (needs a product decision):** `runQa` requires
+    status `EDITING`, and `EDITING_START` fires only when ALL planned
+    chapters assemble — QA on a single chapter of a multi-chapter plan is
+    unreachable through the public API. The "generate ONE chapter" step was
+    honored (chapter 1 via `chapterOrdinals: [1]`), but to run the QA pass
+    canonically the remaining five tiny chapters of the deliberately
+    1200-word plan were generated (disclosed deviation; ~$0.42). No ad-hoc
+    status mutation. If one-chapter QA is a product need, add a documented
+    transition (per-chapter QA scoping or a WRITING→EDITING user event);
+    do not hack status.
+  - **P2 — `fact_checks.source_id` is never populated.** The fact-check
+    output carries `sourceIndex` (position in retainedSources) but the QA
+    handler inserts `factChecks` rows without translating it to
+    `source_id` (stored null). Rationales name the sources in text, so the
+    verification stays auditable, but the DB link is missing. Fix: map
+    `claim.sourceIndex` → the evidence sources array id on insert.
+  - **P2 — the QA job records only one AgentRun.** The handler returns
+    fact-check's usage with `agentType: "editorial"`; the editorial call's
+    (gpt-5.4) usage is dropped, so recorded QA cost understates the pass
+    and the AgentRun's model does not match the editorial agent. Fix:
+    record one AgentRun per agent call inside a multi-agent job.
+  - **Planner sizing note:** with desiredLength 1200 the planner produced
+    6 × ~200-word chapter targets (sums to 1200 — the prompt works), but
+    the chapter prompt floors draft content at "at least 800 words", so
+    actual chapters (~800–1,100 words) run 4–5× their target. Harmless for
+    small plans; watch the target-vs-floor tension during the first real
+    30k-word run.
 
 ### What changed since commit `940db1e` (handler extraction)
 
