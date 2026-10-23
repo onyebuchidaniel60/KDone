@@ -950,6 +950,32 @@ async editChapter(chapterId: string, userId: string, content?: string) {
       const asset = await this.storeAsset(bookIdUnsafe, book!.userId, "epub", "epub", bytes, "application/epub+zip", true, "deterministic", "epub-builder");
       await this.db.update(bookProjects).set({ currentEpubAssetId: asset.id, updatedAt: new Date() }).where(eq(bookProjects.id, bookId));
 
+      // ADR-022: the EPUB job is the natural completion signal for the
+      // PRODUCTION stage. When the EPUB is stored and the full production
+      // artifact set exists, advance EDITING -> PRODUCTION -> QA so the
+      // final preflight gate (ADR-011) can promote the book to
+      // READY_FOR_REVIEW through the public API. Guarded re-reads make a
+      // replay a no-op instead of an invalid-transition failure.
+      const after = await this.loadBook(bookIdUnsafe);
+      if (
+        after!.status === "EDITING" &&
+        after!.currentManuscriptId &&
+        after!.currentMetadataId &&
+        after!.currentCoverAssetId
+      ) {
+        await this.orchestrator.transition({
+          bookProjectId: bookId, event: "PRODUCTION_START", actorType: "system", jobId: job.id,
+          reason: "epub completed; production artifact set complete",
+        });
+        const inProduction = await this.loadBook(bookIdUnsafe);
+        if (inProduction!.status === "PRODUCTION") {
+          await this.orchestrator.transition({
+            bookProjectId: bookId, event: "QA_START", actorType: "system", jobId: job.id,
+            reason: "epub completed; entering the final preflight gate",
+          });
+        }
+      }
+
       return { agentType: "production", usage: { provider: "deterministic", model: "epub-builder", inputUnits: 0, outputUnits: bytes.byteLength, estimatedCost: 0 }, output: { assetId: asset.id, sizeBytes: bytes.byteLength, entries: validation.entryCount } };
     });
   }

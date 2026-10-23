@@ -142,3 +142,11 @@ This document records durable decisions. Do not remove an old decision merely be
 - `NEEDS_REVISION → READY_FOR_REVIEW` (on preflight pass)
 
 `NEEDS_REVISION` remains a blocking state per `ARCHITECTURE.md` §8.
+
+## ADR-022 — `PRODUCTION → QA` fires on EPUB completion
+
+**Decision:** The `PRODUCTION → QA` transition is triggered by successful completion of the EPUB generation job. Cover and metadata may complete in any order; EPUB depends on both and on the assembled manuscript, so it is the natural completion signal for the `PRODUCTION` stage.
+
+**Reason:** The V1 implementation reached `PRODUCTION` but had no trigger to advance to `QA`, so the public API could not complete the lifecycle from production through approval. Found during the first real-book run.
+
+**Effect:** Adds a state-machine trigger. No existing transitions change; this fills a gap. The EPUB handler advances `EDITING → PRODUCTION → QA` (system actor, job id attached) only when the full production artifact set (manuscript, metadata, cover, EPUB) exists; a replay is a guarded no-op rather than an invalid transition.

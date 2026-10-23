@@ -8,7 +8,6 @@ import {
   generationJobs,
   chapters as chaptersTable,
   manuscripts,
-  qualityIssues,
   users,
 } from "@kdone/db/schema";
 import { InMemoryQueue } from "@kdone/jobs";
@@ -229,15 +228,27 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
     // Every generated chapter draft carries provenance and no version is lost.
     expect(await bookStatus(bookId)).toBe("EDITING");
 
-    /* 5. Runs /qa and resolves one intentional critical issue. */
+    /* 5. Runs /qa, then forces one critical issue through a user edit so the
+     * block/resolve flow is exercised deterministically via the public API.
+     * (The context-aware mock editorial reports a clean draft cleanly, so the
+     * critical comes from the deterministic structural check on a deliberately
+     * too-short draft rather than from canned mock output.) */
+    expect((await call(runQa, "POST", "/api/books/x/qa", undefined, { bookId })).status).toBe(202);
+    await drain();
+
+    const allChapterRows = await db
+      .select()
+      .from(chaptersTable)
+      .where(eq(chaptersTable.bookProjectId, bookId))
+      .orderBy(chaptersTable.ordinal);
+    expect((await call(patchChapter, "PATCH", "/api/chapters/x", { content: "Too short." }, { chapterId: allChapterRows[0]!.id })).status).toBe(200);
     expect((await call(runQa, "POST", "/api/books/x/qa", undefined, { bookId })).status).toBe(202);
     await drain();
 
     const { issues } = await json(await call(getIssues, "GET", "/api/books/x/issues", undefined, { bookId }));
-    expect(issues.length).toBeGreaterThan(0);
-
     const critical = issues.filter((i: any) => i.severity === "critical" && i.status === "open");
     expect(critical.length).toBeGreaterThan(0);
+    expect(critical[0].message).toMatch(/too short/i);
 
     // Preflight must FAIL while a critical issue is open.
     const blocked = await json(await call(runPreflight, "POST", "/api/books/x/preflight", undefined, { bookId }));
@@ -245,8 +256,6 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
 
     const resolved = await call(updateIssue, "PATCH", "/api/issues/x", { status: "resolved" }, { issueId: critical[0].id });
     expect(resolved.status).toBe(200);
-    // Remaining critical issues must also be resolved before the gate can pass.
-    await resolveAllCritical(bookId);
 
     /* 6. Generates cover and metadata. */
     expect((await call(generateCover, "POST", "/api/books/x/cover", undefined, { bookId })).status).toBe(202);
@@ -262,8 +271,9 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
     expect(preview.epub).not.toBeNull();
     expect(preview.metadata.aiDisclosure).toBe("ai_generated");
 
-    /* 8. Runs preflight and expects it to pass. */
-    await moveToQa(bookId);
+    /* 8. Runs preflight and expects it to pass. ADR-022: the EPUB job just
+     * drove the book into QA; READY_FOR_REVIEW now arrives with no shortcuts. */
+    expect(await bookStatus(bookId)).toBe("QA");
     const passed = await json(await call(runPreflight, "POST", "/api/books/x/preflight", undefined, { bookId }));
     expect(passed.checks.filter((c: any) => !c.passed)).toHaveLength(0);
     expect(passed.passed).toBe(true);
@@ -361,25 +371,6 @@ describe("KDone V1 lifecycle (E2E smoke test)", () => {
   async function bookStatus(bookId: string): Promise<string> {
     const [book] = await db.select().from(bookProjects).where(eq(bookProjects.id, bookId));
     return book!.status;
-  }
-
-  async function resolveAllCritical(bookId: string) {
-    const rows = await db
-      .select()
-      .from(qualityIssues)
-      .where(eq(qualityIssues.bookProjectId, bookId));
-    for (const row of rows) {
-      if (row.severity === "critical" && row.status === "open") {
-        await db.update(qualityIssues).set({ status: "resolved" }).where(eq(qualityIssues.id, row.id));
-      }
-    }
-  }
-
-  async function moveToQa(bookId: string) {
-    const { Orchestrator } = await import("@kdone/jobs");
-    const orchestrator = new Orchestrator({ db: db, queue: app.queue });
-    await orchestrator.transition({ bookProjectId: bookId, event: "PRODUCTION_START", actorType: "user" });
-    await orchestrator.transition({ bookProjectId: bookId, event: "QA_START", actorType: "system" });
   }
 
 

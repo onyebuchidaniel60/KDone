@@ -16,8 +16,8 @@ import { selectStorage } from "@kdone/storage";
  * Environment:
  *   - Real environment variables always win.
  *   - Otherwise a gitignored `.env.worker` at the repo root is loaded, so the
- *     worker picks up DATABASE_URL / REDIS_URL / QUEUE_DRIVER without inline
- *     PowerShell env setup every time.
+ *     worker picks up DATABASE_URL / REDIS_URL / QUEUE_DRIVER and any S3_*
+ *     storage credentials without inline PowerShell env setup every time.
  *
  * Agent handlers (research, planning, writing, ...) are registered in the
  * later build phases; until then the worker starts, recovers, and idles.
@@ -43,10 +43,11 @@ async function main(): Promise<void> {
 
   const { db } = createDb();
   const queue = await selectQueue();
+  const storage = selectStorage();
 
   // Handlers come from @kdone/handlers, the same module apps/web uses, so the
   // worker and the web app can never drift apart on which job types exist.
-  const app = new KDone({ db, queue, storage: selectStorage() });
+  const app = new KDone({ db, queue, storage });
   const worker = app.worker;
 
 
@@ -59,6 +60,7 @@ async function main(): Promise<void> {
   const types = app.registeredJobTypes();
   console.log(`Worker started with queue driver "${queue.driver}".`);
   console.log(`Connected to ${queue.driver === "bullmq" ? "Upstash Redis" : "in-memory queue"} and registered ${types.length} handlers: ${types.sort().join(", ")}`);
+  console.log(`Storage driver "${storage.name}".`);
 
   const shutdown = async (signal: string) => {
     console.log(`Received ${signal}; shutting down worker.`);
