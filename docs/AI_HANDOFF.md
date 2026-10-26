@@ -4,7 +4,7 @@
 
 All V1 phases A—K are implemented. All suites green:
 
-- `pnpm test` — **68/68** (PGlite, no services needed; includes the 6 container
+- `pnpm test` — **74/74** (PGlite, no services needed; includes the 6 container
   queue-selection drift tests and the 17 new OpenRouter provider tests)
 - `pnpm test:e2e` — 1/1 (against Neon via `DATABASE_URL`)
 - `pnpm test:browser` — 8/8
@@ -564,3 +564,62 @@ worker + job lifecycle logs. The worker was restarted after the fix and
 still registered 7 handlers and processed a live research job end-to-end;
 the full unit suite (72/72) passes. Future work should add structured
 per-job lifecycle logs (pickup started, succeeded, transition applied).
+
+## Phase 8 — Workspace UI for real-book validation (2026-10-26)
+
+All V1 backend phases A—K are complete, but the book workspace shell
+(`apps/web/src/app/books/[bookId]/page.tsx`) linked to 7 sub-routes that did not
+exist, and there was no way to create a book through the UI. Phase 8 adds the
+workspace UI so a real user can run a book through the full lifecycle:
+Create → Research → Approve → Plan → Approve → Write → QA → Preview → Preflight → Approve → Publish (prepare).
+
+### New pages
+
+- `apps/web/src/app/create/page.tsx` — Create-book form (`POST /api/books`),
+  then redirects to `/books/[id]`. Client component, inline styles,
+  `data-testid` attributes.
+- `apps/web/src/app/dashboard/page.tsx` — Added "+ Create book" button linking
+  to `/create`.
+- `apps/web/src/app/books/[bookId]/research/page.tsx` — Server component.
+  `GET /api/books/:id/research` (sources/findings), `POST /api/books/:id/research`
+  (start), `POST /api/books/:id/research/approve` (approve).
+- `apps/web/src/app/books/[bookId]/outline/page.tsx` — Server component.
+  `GET /api/books/:id/plan` (outline chapters), `POST /api/books/:id/plan`
+  (start), `POST /api/books/:id/plan/approve` (approve).
+- `apps/web/src/app/books/[bookId]/manuscript/page.tsx` — Server component.
+  `GET /api/books/:id/manuscript` (chapters), `POST /api/books/:id/generate`
+  (start generation), link to editor.
+- `apps/web/src/app/books/[bookId]/qa/page.tsx` + `client.tsx` — Server wrapper
+  + client component. `GET /api/books/:id/issues`, `POST /api/books/:id/qa`
+  (run QA), `PATCH /api/issues/:id` (update issue status/proposed fix).
+- `apps/web/src/app/books/[bookId]/preview/page.tsx` — Server component.
+  `GET /api/books/:id/preview` (preview URL/asset).
+- `apps/web/src/app/books/[bookId]/publish/page.tsx` + `client.tsx` — Server
+  wrapper + client component. `POST /api/books/:id/preflight`, `POST
+  /api/books/:id/approve`, `POST /api/books/:id/publish/start` (mode, checklist).
+  Publishing is prepare-only per ADR-012; USER_APPROVED is terminal.
+
+### Conventions followed
+
+- Server components own auth (`requireUser()`), ownership queries
+  (`eq(bookProjects.userId, user.id)`), and `notFound()`/`redirect()`.
+- Client components own interactive state (loading, error, result) and `fetch()`
+  calls to API routes.
+- `data-testid` on all actionable elements for future Playwright/vitest coverage.
+- No new dependencies; uses existing `@kdone/*` workspace packages and Next.js
+  15 app router patterns already in the codebase.
+
+### Verification
+
+- `pnpm --filter web typecheck` — clean
+- `pnpm --filter web build` — all routes compile, including new workspace pages
+- `pnpm test` — 74/74 pass
+- `next lint` — not applicable (no ESLint config / `lint` script in this repo)
+
+### Remaining for V1 completion
+
+- Real-book validation end-to-end through the UI requires a real Postgres
+  (`DATABASE_URL`) for `pnpm test:e2e` (the handler-level lifecycle smoke test).
+- Playwright browser tests (`pnpm test:browser`) cover UI interactions but were
+  last run at 8/8 before these pages were added; consider adding coverage for
+  the new workspace flows.

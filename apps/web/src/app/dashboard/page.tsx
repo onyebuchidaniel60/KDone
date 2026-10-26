@@ -26,6 +26,22 @@ export default async function DashboardPage() {
 
   return (
     <div>
+      <p>
+        <a
+          href="/create"
+          style={{
+            display: "inline-block",
+            padding: "0.5rem 1rem",
+            background: "#2563eb",
+            color: "white",
+            textDecoration: "none",
+            borderRadius: "0.375rem",
+            marginBottom: "1rem",
+          }}
+        >
+          + Create book
+        </a>
+      </p>
       <h1>Your books</h1>
       {books.length === 0 ? (
         <p>No book projects yet.</p>
