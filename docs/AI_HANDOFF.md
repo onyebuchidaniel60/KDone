@@ -17,6 +17,42 @@ end-to-end live** (research task only — see the OpenRouter section below).
 Writing/QA/metadata/cover run through the same provider code but have only
 unit-test coverage so far.
 
+### Workspace UI smoke test (2026-10-27) — metadata + EPUB verified, cover blocked
+
+Validated the workspace UI end-to-end on book
+`7c8a5446-9f5f-4f58-b351-f63f81a400bf` ("AI Bookkeeping, One Robot at a
+Time", 6 chapters, 13,549-word manuscript v1, status `EDITING`).
+
+- **Render check (production `next start`):** `/books/:id`, `/manuscript`,
+  `/qa`, `/preview`, `/publish` all 200 with visible content and no page
+  errors. Two server components were fetching their own API over a relative
+  URL with no cookie jar (`TypeError: Failed to parse URL`); `/manuscript`,
+  `/preview`, `/research` and `/outline` now call `getApp()` directly.
+- `/publish` previously had no production actions; it now exposes generate
+  metadata/cover/EPUB, artifact status, preflight, approval, the five-item
+  checklist and KDP field mapping, and polls `GET /jobs` (field is `jobId`,
+  message is `message`).
+- **Metadata:** succeeded — v1 `71aa4ca9-…`, model `openai/gpt-5-mini`,
+  16.5 s, $0.0024615, `ai_disclosure = ai_generated`.
+- **EPUB:** succeeded — asset `3b545ee9-…`, 95,786 bytes,
+  `application/epub+zip` (zip magic verified), provenance
+  `50d1bbc1-… (deterministic / epub-builder)`, stored by the S3/R2 driver.
+- **Cover: blocked.** Two jobs (`d522ae32-…`, `3e804fff-…`) failed with
+  `LLMTruncatedError: finish_reason=length` and sit in `RETRYING`
+  forever. Cause: `coverPrompt` requires a complete 1600×2560 SVG inside the
+  JSON response while `MAX_OUTPUT_TOKENS.cover = 2000`
+  (`packages/ai/src/openrouter-provider.ts`). Separate defect: BullMQ
+  `enqueue` re-adds with the same `jobId` and `removeOnComplete: false`, so
+  the worker's RETRYING re-enqueue is deduped and never executes
+  (`packages/jobs/src/bullmq-queue.ts`, `worker.ts`).
+- **State:** ADR-022 correctly withheld `EDITING → PRODUCTION → QA` because
+  no cover exists; the book remains `EDITING` with
+  `current_cover_asset_id = null`. Preflight/approve/KDP prepare were not
+  reached. Round cost: **$0.00246150**.
+- **UI bug:** the `Editor` workspace nav entry links to `/editor`, which has
+  no page (404 prefetch).
+- `pnpm test` — **74/74** (10 files).
+
 ### OpenRouter LLM provider implemented and verified on research (round 2026-10-20)
 
 - `packages/ai/src/openrouter-provider.ts` — `OpenRouterProvider` over the
@@ -275,7 +311,7 @@ unit-test coverage so far.
 |---|---|
 | Database | Real Postgres schema/migrations. Dev needs Postgres; tests use PGlite. |
 | LLM / research | Real path selected whenever `OPENROUTER_API_KEY` is set (OpenRouterProvider + OpenRouterResearchProvider with strict structured outputs) — **verified live for research** (job `05bc63ec…`, 3 real sources / 5 findings, $0.00389525, 28 s exec). Writing/QA/metadata/cover go through the same provider + prompts with unit-test coverage only, no live run yet. Mock providers remain the fallback with no key. |
-| Storage | **Mocked** in-memory. No S3/MinIO client yet. |
+| Storage | **Real S3/R2 driver** when `S3_*` is configured (`StorageProvider` selection in `packages/storage`, ADR-016); in-memory mock otherwise. Live EPUB download verified 2026-10-27. |
 | Queue | **Real BullMQ in prod**; in-memory in tests. |
 | Auth | Credentials + JWT for local dev. OAuth not configured. |
 | KDP submission | **Not implemented by design.** Mode A prepare only. |
@@ -291,7 +327,7 @@ blocker plus the live end-to-end proof of the queue path.
 
 | Command | Needs | Result |
 |---|---|---|
-| pnpm test | nothing (PGlite) | 68/68 |
+| pnpm test | nothing (PGlite) | 74/74 |
 | pnpm test:e2e | DATABASE_URL (real Postgres) | 1/1 |
 | pnpm test:browser | DATABASE_URL + Chromium cache | 8/8 |
 
@@ -307,7 +343,7 @@ sequential statement in `persistResearch` stalled forever. Batching the sources
 loop moved the stall forward by exactly one statement, so the loop was not the
 cause — PGlite's single-connection WASM model cannot drain sequential statements
 the way a job handler issues them. Unit tests keep using PGlite and still pass
-(28/28); they were not changed.
+(74/74); they were not changed.
 
 The E2E now applies the **same** drizzle-kit generated migrations production
 uses, and creates a unique user per run so repeated runs never collide. Nothing
@@ -336,10 +372,17 @@ is ever deleted.
    shared-store decision: an in-process limiter is incorrect across multiple web
    instances, so a store must be chosen and documented (Redis is the obvious
    candidate, already required for BullMQ). No ADR written yet.
-5. **Storage is mocked only** — no S3/MinIO client implemented, so
-   `StorageProvider` has a single implementation.
-6. **Job polling UI** — `GET /api/books/:bookId/jobs` now exists, but no UI
-   consumes it.
+5. **Cover generation cannot complete on the real provider (blocker).**
+   `coverPrompt` asks for a complete 1600×2560 SVG inside one JSON response
+   while the cover task is capped at 2000 output tokens, so the provider
+   returns `finish_reason=length` and the job raises `LLMTruncatedError`.
+   Needs a product decision: raise the cover cap, split the brief from the SVG,
+   or render the deterministic template in code.
+6. **BullMQ retries never execute.** `enqueue` adds with the durable `jobId`
+   and `removeOnComplete: false`; re-adding after a retryable failure is
+   deduped, so jobs stay `RETRYING` until manual intervention. Fix belongs in
+   `packages/jobs` (unique delivery key per attempt or `removeOnComplete` for
+   retries), with a regression test.
 7. **Settings PATCH endpoints** — `GET /api/settings/providers` and
    `GET /api/settings/publishing` are implemented; the `PATCH` variants from
    API.md section 13 are not.
@@ -369,7 +412,7 @@ in-process).
 ## How to run tests
 
 ```bash
-pnpm test         # 28 unit/integration tests, PGlite only, no services needed
+pnpm test         # 74 unit/integration tests, PGlite only, no services needed
 pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
 ```
 

@@ -3,14 +3,12 @@ import { notFound, redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { bookProjects } from "@kdone/db/schema";
 import { getDb } from "@/lib/db";
+import { getApp } from "@/server/container";
 import { requireUser } from "@/lib/session";
 
-async function fetchPlan(bookId: string) {
-  const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/books/${bookId}/plan`, {
-    cache: "no-store",
-  });
-  if (!response.ok) return null;
-  return (await response.json()) as { plan?: any; chapters?: any[] };
+/** Service layer, not a self-HTTP call: server components carry no cookies. */
+async function fetchPlan(bookId: string, userId: string) {
+  return getApp().getPlan(bookId, userId);
 }
 
 export default async function OutlinePage({
@@ -32,7 +30,7 @@ export default async function OutlinePage({
   const book = rows[0];
   if (!book) notFound();
 
-  const planData = await fetchPlan(bookId);
+  const planData = await fetchPlan(bookId, user.id);
   const plan = planData?.plan;
   const chapters = planData?.chapters ?? [];
 

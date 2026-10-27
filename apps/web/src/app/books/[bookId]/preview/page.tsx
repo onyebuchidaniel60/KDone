@@ -3,15 +3,8 @@ import { notFound, redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { bookProjects } from "@kdone/db/schema";
 import { getDb } from "@/lib/db";
+import { getApp } from "@/server/container";
 import { requireUser } from "@/lib/session";
-
-async function fetchPreview(bookId: string) {
-  const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/books/${bookId}/preview`, {
-    cache: "no-store",
-  });
-  if (!response.ok) return null;
-  return (await response.json()) as { url?: string; assetId?: string; bookId?: string };
-}
 
 export default async function PreviewPage({
   params,
@@ -32,7 +25,32 @@ export default async function PreviewPage({
   const book = rows[0];
   if (!book) notFound();
 
-  const preview = await fetchPreview(bookId);
+  // Service layer, not a self-HTTP call: server components carry no cookies,
+  // so a fetch to /api would be unauthenticated (ADR-016 architecture).
+  const preview = await getApp().previewManifest(bookId, user.id);
+
+  const rowsToShow = [
+    {
+      label: "Manuscript",
+      value: preview.manuscript
+        ? `v${preview.manuscript.version} · ${preview.manuscript.wordCount ?? 0} words`
+        : null,
+      testId: "preview-manuscript",
+    },
+    {
+      label: "Metadata",
+      value: preview.metadata
+        ? `${preview.metadata.title} (v${preview.metadata.version})`
+        : null,
+      testId: "preview-metadata",
+    },
+    { label: "Cover", value: preview.cover ? preview.cover.id : null, testId: "preview-cover" },
+    {
+      label: "EPUB",
+      value: preview.epub ? `${preview.epub.id} · ${preview.epub.sizeBytes ?? 0} bytes` : null,
+      testId: "preview-epub",
+    },
+  ];
 
   return (
     <div style={{ maxWidth: 900, margin: "2rem auto", fontFamily: "system-ui, sans-serif" }}>
@@ -44,18 +62,31 @@ export default async function PreviewPage({
       <h1>Preview</h1>
       <p style={{ opacity: 0.7 }}>Status: {book.status}</p>
 
-      {preview?.url ? (
-        <>
-          <p>Preview available:</p>
-          <a href={preview.url} target="_blank" rel="noopener noreferrer" style={{ color: "#2563eb" }}>
-            Open preview
+      <ul style={{ marginTop: "1rem" }}>
+        {rowsToShow.map((row) => (
+          <li key={row.label} data-testid={row.testId} style={{ marginBottom: "0.4rem" }}>
+            <strong>{row.label}:</strong>{" "}
+            {row.value ? row.value : <span style={{ color: "crimson" }}>missing</span>}
+          </li>
+        ))}
+      </ul>
+
+      <p style={{ opacity: 0.7 }}>
+        Open critical issues: {preview.openCritical} · total issues: {preview.issues.length}
+      </p>
+
+      {preview.epub ? (
+        <p style={{ marginTop: "1rem" }}>
+          <a
+            href={`/api/books/${book.id}/assets/${preview.epub.id}`}
+            style={{ color: "#2563eb" }}
+            data-testid="open-epub"
+          >
+            Download EPUB
           </a>
-          <p style={{ marginTop: "1rem", opacity: 0.7 }}>Asset id: {preview.assetId}</p>
-        </>
+        </p>
       ) : (
-        <>
-          <p>No preview available yet. Generate the EPUB first, then return here.</p>
-        </>
+        <p>No preview available yet. Generate the EPUB first, then return here.</p>
       )}
     </div>
   );

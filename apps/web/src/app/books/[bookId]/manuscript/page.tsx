@@ -3,15 +3,19 @@ import { notFound, redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { bookProjects } from "@kdone/db/schema";
 import { getDb } from "@/lib/db";
+import { getApp } from "@/server/container";
 import { requireUser } from "@/lib/session";
 
-async function fetchManuscript(bookId: string) {
-  const response = await fetch(
-    `${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/books/${bookId}/manuscript`,
-    { cache: "no-store" },
-  );
-  if (!response.ok) return null;
-  return (await response.json()) as { chapters?: any[] };
+/**
+ * Reads through the application service layer, not over HTTP. A server
+ * component has no browser cookie jar, so fetching its own API would be
+ * unauthenticated (and a relative URL has no base to resolve against).
+ */
+async function fetchManuscript(bookId: string, userId: string) {
+  const app = getApp();
+  const manuscript = await app.getManuscript(bookId, userId);
+  const plan = await app.getPlan(bookId, userId);
+  return { manuscript, chapters: plan?.chapters ?? [] };
 }
 
 export default async function ManuscriptPage({
@@ -33,8 +37,7 @@ export default async function ManuscriptPage({
   const book = rows[0];
   if (!book) notFound();
 
-  const manuscript = await fetchManuscript(bookId);
-  const chapters = manuscript?.chapters ?? [];
+  const { manuscript, chapters } = await fetchManuscript(bookId, user.id);
   const hasChapters = chapters.length > 0;
 
   return (
@@ -67,6 +70,14 @@ export default async function ManuscriptPage({
       ) : (
         <>
           <p>{chapters.length} chapter(s) generated.</p>
+          {manuscript ? (
+            <p style={{ opacity: 0.7 }}>
+              Manuscript v{manuscript.version} · {manuscript.wordCount ?? 0} words ·
+              status {manuscript.status}
+            </p>
+          ) : (
+            <p>No manuscript assembled yet.</p>
+          )}
           <ul>
             {chapters.map((chapter, i) => (
               <li key={i} style={{ marginBottom: "0.75rem" }}>

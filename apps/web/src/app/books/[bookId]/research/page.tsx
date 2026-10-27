@@ -3,14 +3,12 @@ import { notFound, redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { bookProjects } from "@kdone/db/schema";
 import { getDb } from "@/lib/db";
+import { getApp } from "@/server/container";
 import { requireUser } from "@/lib/session";
 
-async function fetchResearch(bookId: string) {
-  const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/books/${bookId}/research`, {
-    cache: "no-store",
-  });
-  if (!response.ok) return null;
-  return (await response.json()) as { project?: any; sources?: any[]; findings?: any[] };
+/** Service layer, not a self-HTTP call: server components carry no cookies. */
+async function fetchResearch(bookId: string, userId: string) {
+  return getApp().getResearch(bookId, userId);
 }
 
 export default async function ResearchPage({
@@ -32,7 +30,7 @@ export default async function ResearchPage({
   const book = rows[0];
   if (!book) notFound();
 
-  const research = await fetchResearch(bookId);
+  const research = await fetchResearch(bookId, user.id);
   const hasResearch = Boolean(research?.project);
   const sources = research?.sources ?? [];
   const findings = research?.findings ?? [];
