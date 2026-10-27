@@ -10,7 +10,6 @@ const WORKSPACE_NAV = [
   { href: "research", label: "Research" },
   { href: "outline", label: "Outline" },
   { href: "manuscript", label: "Manuscript" },
-  { href: "editor", label: "Editor" },
   { href: "qa", label: "QA" },
   { href: "preview", label: "Preview" },
   { href: "publish", label: "Publish" },

@@ -4,7 +4,7 @@
 
 All V1 phases A—K are implemented. All suites green:
 
-- `pnpm test` — **74/74** (PGlite, no services needed; includes the 6 container
+- `pnpm test` — **79/79** (PGlite, no services needed; includes the 6 container
   queue-selection drift tests and the 17 new OpenRouter provider tests)
 - `pnpm test:e2e` — 1/1 (against Neon via `DATABASE_URL`)
 - `pnpm test:browser` — 8/8
@@ -14,8 +14,9 @@ Deployed: https://kdone-uhhh2.vercel.app (deployment
 configured** in `.env.worker` and in Vercel production, so the local worker
 and the web app select the real provider. **Real LLM research is verified
 end-to-end live** (research task only — see the OpenRouter section below).
-Writing/QA/metadata/cover run through the same provider code but have only
-unit-test coverage so far.
+Writing, QA and metadata also ran live for book `7c8a5446` on 2026-10-22/27.
+The cover LLM call now produces only a small structured brief; the SVG is
+rendered deterministically by the image provider (2026-10-27).
 
 ### Workspace UI smoke test (2026-10-27) — metadata + EPUB verified, cover blocked
 
@@ -37,7 +38,8 @@ Time", 6 chapters, 13,549-word manuscript v1, status `EDITING`).
 - **EPUB:** succeeded — asset `3b545ee9-…`, 95,786 bytes,
   `application/epub+zip` (zip magic verified), provenance
   `50d1bbc1-… (deterministic / epub-builder)`, stored by the S3/R2 driver.
-- **Cover: blocked.** Two jobs (`d522ae32-…`, `3e804fff-…`) failed with
+- **Cover: blocked at the time** (resolved the same day — see the bug-fix
+  round below). Two jobs (`d522ae32-…`, `3e804fff-…`) failed with
   `LLMTruncatedError: finish_reason=length` and sit in `RETRYING`
   forever. Cause: `coverPrompt` requires a complete 1600×2560 SVG inside the
   JSON response while `MAX_OUTPUT_TOKENS.cover = 2000`
@@ -45,13 +47,74 @@ Time", 6 chapters, 13,549-word manuscript v1, status `EDITING`).
   `enqueue` re-adds with the same `jobId` and `removeOnComplete: false`, so
   the worker's RETRYING re-enqueue is deduped and never executes
   (`packages/jobs/src/bullmq-queue.ts`, `worker.ts`).
-- **State:** ADR-022 correctly withheld `EDITING → PRODUCTION → QA` because
+- **State at the time:** ADR-022 correctly withheld `EDITING → PRODUCTION → QA` because
   no cover exists; the book remains `EDITING` with
   `current_cover_asset_id = null`. Preflight/approve/KDP prepare were not
   reached. Round cost: **$0.00246150**.
-- **UI bug:** the `Editor` workspace nav entry links to `/editor`, which has
+- **UI bug (fixed):** the `Editor` workspace nav entry linked to `/editor`, which had
   no page (404 prefetch).
 - `pnpm test` — **74/74** (10 files).
+
+### Bug-fix round: retries, deterministic covers, nav (2026-10-27) — all three fixed; lifecycle reaches KDP prepare
+
+**BUG 1 (P0) — BullMQ retries never executed. Fixed.**
+The durable `generation_jobs` row stays the source of truth; queue delivery
+ids are now per attempt. `EnqueueOptions.attempt` + `deliveryJobId(durableId,
+attempt)` produce `<durableJobId>:attempt:<n>` in
+`packages/jobs/src/bullmq-queue.ts`, so a RETRYING re-add can no longer be
+deduped. `worker.ts` reads `attempts` back from the durable row after
+`markFailed` and re-enqueues with that number; stale-job recovery uses the
+same value. The handler still identifies work by the durable id in
+`job.data`. Regression tests prove a throwing handler is retried to
+`maxAttempts`, then lands in `FAILED` with `error_code` / `error_message` /
+`completed_at` recorded, and that every attempt gets a distinct delivery id.
+`pnpm test` is **79/79** (11 files).
+
+**BUG 2 (P1) — cover truncation / LLM-written SVG. Fixed.**
+The Cover Agent now asks the LLM only for `coverBriefSchema` (2-3 `#rrggbb`
+palette colors, `motif`, `titleTreatment`, one-sentence `rationale`; fits
+~500 tokens). `MAX_OUTPUT_TOKENS.cover = 1000` and the schema name is
+`cover_brief`. `MockImageProvider` deterministically renders a 1600x2560 SVG
+from brief + title + subtitle + author (`packages/ai/src/index.ts`,
+`coverSvg`), escaping all caller text and emitting no external references.
+The handler stores it through `StorageProvider` with provenance
+`provider=openrouter+mock-image`,
+`model=openai/gpt-5-mini+deterministic-svg`. No model writes markup.
+New `packages/ai/src/cover-renderer.test.ts` pins determinism, dimensions,
+escaping, palette validation, and zero external references.
+
+**BUG 3 — `/editor` nav 404. Fixed** by the smaller diff: removed the
+`Editor` entry from `WORKSPACE_NAV` and the manuscript page's "Open editor"
+link. No empty page was added.
+
+**Stuck jobs cleaned.** `d522ae32-8156-4051-8af5-70f394b53380` and
+`3e804fff-c073-4279-a9f2-b56e42a8ebbb` were pre-fix `RETRYING` artifacts; both
+are now `FAILED` with `completed_at` and an explanatory suffix on
+`error_message`.
+
+**Lifecycle re-run on `7c8a5446-9f5f-4f58-b351-f63f81a400bf` (UI, production
+build, local worker):**
+1. Cover: job `7b2ef6b7-1a0f-44cd-80ce-b4bf35280de7` SUCCEEDED attempt 1.
+   Asset `7678ad68-8acc-4395-a8e7-0a3ff9c5cd45`, storage key
+   `books/7c8a5446-9f5f-4f58-b351-f63f81a400bf/cover/v1.svg`,
+   `image/svg+xml`, 1,629 bytes, provenance `dcdee032-6f64-4bc9-8c37-c6776faba06e`.
+   Authenticated download returns 200 with
+   `width="1600" height="2560"`; unauthenticated returns 401.
+2. EPUB: job `3a6d9392-9bf4-410e-abb2-089f8d4eadec` SUCCEEDED attempt 1.
+   Asset `852c0b10-1b2c-476e-9dca-e6ec43dd1a2c` (v2), 95,786 bytes.
+   Transitions fired `EDITING -> PRODUCTION -> QA`; status became `QA`.
+3. QA: 16 existing issues, 0 critical / 4 warning / 12 suggestion; not re-run.
+4. Preview: manuscript v1 (13,549 words), metadata v1, cover, EPUB all present.
+5. Preflight: PASSED all 8 checks.
+6. Approve: `ad56f202-e9f1-49fc-b9c0-4330e8c5b36a`; status `USER_APPROVED`.
+7. KDP prepare: publishing job `e9f949ef-5cdc-4049-bfe1-59d2c3b610f6`,
+   status `PREPARED`, package at
+   `books/7c8a5446-9f5f-4f58-b351-f63f81a400bf/kdp/package.json`; event
+   `package.prepared` with `requiresDisclosure: true`. Book remains
+   `USER_APPROVED` (prepare does not publish).
+
+Round cost from AgentRun rows: **$0.001048** (cover brief; EPUB render $0).
+Cumulative cost for this book: $0.08791075.
 
 ### OpenRouter LLM provider implemented and verified on research (round 2026-10-20)
 

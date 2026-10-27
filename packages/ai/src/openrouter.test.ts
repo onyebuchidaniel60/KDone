@@ -4,7 +4,7 @@ import type { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   chapterContentSchema,
-  coverOutputSchema,
+  coverBriefSchema,
   editorialOutputSchema,
   factCheckOutputSchema,
   metadataOutputSchema,
@@ -122,7 +122,7 @@ async function taskPayload(task: string): Promise<string> {
       return JSON.stringify(r.output);
     }
     case "cover": {
-      const r = await mock.generate({ task, seed: "payload", schema: coverOutputSchema, context: {} });
+      const r = await mock.generate({ task, seed: "payload", schema: coverBriefSchema, context: {} });
       return JSON.stringify(r.output);
     }
   }
@@ -136,7 +136,7 @@ const TASK_SAMPLES = new Map<string, z.ZodType<unknown, z.ZodTypeDef, unknown>>(
   ["editorial", editorialOutputSchema],
   ["fact_check", factCheckOutputSchema],
   ["metadata", metadataOutputSchema],
-  ["cover", coverOutputSchema],
+  ["cover", coverBriefSchema],
 ]);
 
 afterEach(() => {
@@ -336,7 +336,7 @@ const SCHEMAS: Record<string, z.ZodType<unknown, z.ZodTypeDef, unknown>> = {
   editorial: editorialOutputSchema,
   fact_check: factCheckOutputSchema,
   metadata: metadataOutputSchema,
-  cover: coverOutputSchema,
+  cover: coverBriefSchema,
 };
 
 describe("provider selection", () => {

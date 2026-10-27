@@ -85,14 +85,6 @@ export default async function ManuscriptPage({
               </li>
             ))}
           </ul>
-          <p>
-            <Link
-              href={`/books/${book.id}/editor`}
-              style={{ color: "#2563eb", textDecoration: "none" }}
-            >
-              Open editor
-            </Link>
-          </p>
         </>
       )}
     </div>

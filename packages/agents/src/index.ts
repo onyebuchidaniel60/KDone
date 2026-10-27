@@ -2,7 +2,7 @@ import type { ImageProvider, LLMProvider, ResearchProvider, Usage } from "@kdone
 import {
   assembledManuscriptSchema,
   chapterContentSchema,
-  coverOutputSchema,
+  coverBriefSchema,
   editorialOutputSchema,
   factCheckOutputSchema,
   metadataOutputSchema,
@@ -327,21 +327,40 @@ export async function coverAgent(
   ctx: AgentContext,
   plan: PlanOutput,
 ): Promise<AgentResult<CoverOutput>> {
-  // The brief is generated; the image itself comes from the image provider.
+  // The LLM writes only a small art-direction brief; the image provider owns
+  // the actual cover render. Asking a text model for a full SVG was both
+  // token-fragile (finish_reason=length) and unreliable markup.
   const brief = await llm.generate({
     task: "cover",
     seed: `${ctx.bookProjectId}:cover`,
-    schema: coverOutputSchema,
-    context: { title: plan.title, subtitle: plan.subtitle },
+    schema: coverBriefSchema,
+    context: {
+      title: plan.title,
+      subtitle: plan.subtitle,
+      topic: ctx.topic,
+      audience: ctx.targetReader,
+    },
   });
 
-  const { output, usage } = await image.generateCover({
+  const rendered = await image.generateCover({
     title: plan.title,
     subtitle: plan.subtitle,
-    palette: brief.output.brief.palette,
+    authorName: ctx.authorName,
+    brief: brief.output,
   });
 
-  return { output: { ...output, brief: brief.output.brief }, usage, generated: true };
+  return {
+    output: { ...rendered.output, brief: brief.output },
+    usage: {
+      // Both halves are disclosed: the LLM brief and the deterministic render.
+      provider: `${brief.usage.provider}+${rendered.usage.provider}`,
+      model: `${brief.usage.model}+${rendered.usage.model}`,
+      inputUnits: brief.usage.inputUnits + rendered.usage.inputUnits,
+      outputUnits: brief.usage.outputUnits + rendered.usage.outputUnits,
+      estimatedCost: Number((brief.usage.estimatedCost + rendered.usage.estimatedCost).toFixed(8)),
+    },
+    generated: true,
+  };
 }
 
 /* -------------------------------------------------------------- Production */

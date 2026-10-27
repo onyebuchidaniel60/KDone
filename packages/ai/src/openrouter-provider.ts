@@ -59,7 +59,7 @@ const MAX_OUTPUT_TOKENS: Record<string, number> = {
   editorial: 4000,
   fact_check: 4000,
   metadata: 2000,
-  cover: 2000,
+  cover: 1000,
 };
 
 const SCHEMA_NAMES: Record<string, string> = {
@@ -69,7 +69,7 @@ const SCHEMA_NAMES: Record<string, string> = {
   editorial: "editorial_output",
   fact_check: "fact_check_output",
   metadata: "metadata_output",
-  cover: "cover_output",
+  cover: "cover_brief",
 };
 
 export class LLMRefusalError extends Error {
@@ -357,10 +357,11 @@ function metadataPrompt(ctx: Record<string, unknown>): string {
 function coverPrompt(ctx: Record<string, unknown>): string {
   return [
     `Design an ebook cover brief for "${String(ctx.title)}" (${String(ctx.subtitle)}) about ${String(ctx.topic)} for ${String(ctx.audience)}.`,
-    "brief.concept should describe the composition; brief.palette is 1-8 hex color strings; brief.typographyNote explains font style and hierarchy.",
-    "svg must be a complete standalone SVG with width=\"1600\" height=\"2560\" viewBox=\"0 0 1600 2560\".",
-    "Use the template-style below as the baseline, filling in palette, title, and subtitle from your brief; keep shapes simple (rect, text). Never embed external images, base64 data, or scripts.",
-    "Template baseline: a full-cover background rect, a bordered frame rect (x=80 y=80 width=1440 height=2400 with stroke), a centered serif title near y=1100 at font-size=120, and a centered sans-serif subtitle near y=1280 at font-size=52.",
+    "palette: exactly 2-3 opaque hex colors in #rrggbb form, ordered background, foreground, accent. Pick a readable, high-contrast combination.",
+    "motif: a short kicker phrase of at most 8 words that signals the book's angle.",
+    "titleTreatment: one of uppercase, serif, sans-serif, display.",
+    "rationale: one sentence explaining the visual direction.",
+    "Do NOT write SVG, HTML, XML, or any markup. The cover is rendered deterministically from this brief by the image provider.",
   ].join(" ");
 }
 

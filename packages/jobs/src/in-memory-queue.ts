@@ -40,7 +40,7 @@ export class InMemoryQueue implements Queue {
       id: (payload as { jobId?: string } | null)?.jobId ?? crypto.randomUUID(),
       type: jobType,
       payload,
-      attemptsMade: 0,
+      attemptsMade: opts.attempt ?? 0,
     };
 
     if (!this.autoDeliver) {

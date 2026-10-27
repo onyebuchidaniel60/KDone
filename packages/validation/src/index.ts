@@ -166,13 +166,26 @@ export const metadataOutputSchema = z.object({
 
 export type MetadataOutput = z.infer<typeof metadataOutputSchema>;
 
+/**
+ * The LLM's only cover job: a small art-direction brief. It must fit
+ * comfortably in ~500 output tokens. The SVG is rendered deterministically by
+ * the image provider, never written by the model.
+ */
+export const coverBriefSchema = z.object({
+  palette: z
+    .array(z.string().regex(/^#[0-9a-fA-F]{6}$/, "palette colors must be #rrggbb"))
+    .min(2)
+    .max(3),
+  motif: z.string().min(1).max(120),
+  titleTreatment: z.enum(["uppercase", "serif", "sans-serif", "display"]),
+  rationale: z.string().min(1).max(500),
+});
+
+export type CoverBrief = z.infer<typeof coverBriefSchema>;
+
 export const coverOutputSchema = z.object({
-  brief: z.object({
-    concept: z.string().min(1).max(2000),
-    palette: z.array(z.string().max(20)).min(1).max(8),
-    typographyNote: z.string().max(500),
-  }),
-  /** Small deterministic SVG rendered by the mock image provider. */
+  brief: coverBriefSchema,
+  /** Full-size deterministic SVG rendered by the image provider. */
   svg: z.string().min(1).max(400_000),
   mimeType: z.string().default("image/svg+xml"),
 });

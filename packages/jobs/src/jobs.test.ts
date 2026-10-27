@@ -4,6 +4,7 @@ import { createTestDb, type TestDbHandle } from "@kdone/db/test-db";
 import { agentRuns, bookProjects, bookStateTransitions, generationJobs, users } from "@kdone/db/schema";
 import { InMemoryQueue } from "./in-memory-queue.js";
 import { Orchestrator } from "./orchestrator.js";
+import { deliveryJobId, type EnqueueOptions } from "./queue.js";
 import { Worker } from "./worker.js";
 
 let handle: TestDbHandle;
@@ -145,10 +146,64 @@ describe("worker execution", () => {
     [job] = await db.select().from(generationJobs).where(eq(generationJobs.id, jobId));
     expect(job?.status).toBe("FAILED");
     expect(calls).toBe(2);
+    expect(job?.attempts).toBe(2);
+    expect(job?.errorCode).toBe("Error");
+    expect(job?.errorMessage).toBe("provider exploded");
+    expect(job?.completedAt).not.toBeNull();
 
     // A failed job must not be reported as success and must not create an AgentRun.
     const runs = await db.select().from(agentRuns).where(eq(agentRuns.generationJobId, jobId));
     expect(runs).toHaveLength(0);
+  });
+
+  it("gives every delivery attempt a distinct queue id", () => {
+    // BullMQ dedupes by job id. The durable id is stable across attempts, so
+    // the delivery id must carry the attempt or a retry is silently dropped.
+    expect(deliveryJobId("job-1", 0)).toBe("job-1:attempt:0");
+    expect(deliveryJobId("job-1", 1)).toBe("job-1:attempt:1");
+    expect(deliveryJobId("job-1", 0)).not.toBe(deliveryJobId("job-1", 1));
+  });
+
+  it("re-delivers a retry with the durable attempt number", async () => {
+    class RecordingQueue extends InMemoryQueue {
+      readonly deliveries: Array<{ jobId: string; attempt: number | undefined }> = [];
+
+      override async enqueue(jobType: string, payload: unknown, opts: EnqueueOptions = {}) {
+        this.deliveries.push({
+          jobId: (payload as { jobId: string }).jobId,
+          attempt: opts.attempt,
+        });
+        return super.enqueue(jobType, payload, opts);
+      }
+    }
+
+    const queue = new RecordingQueue({ autoDeliver: false });
+    const orchestrator = new Orchestrator({ db, queue });
+    const worker = new Worker({ db, queue }).handle("planning", async () => {
+      throw new Error("retry me");
+    });
+    void worker;
+
+    const { jobId } = await orchestrator.enqueue({
+      userId,
+      bookProjectId: bookId,
+      jobType: "planning",
+      maxAttempts: 2,
+    });
+
+    // Initial delivery has no attempt override (attempt 0).
+    expect(queue.deliveries).toEqual([{ jobId, attempt: undefined }]);
+
+    // First failure records attempts=1 and must re-deliver under attempt 1.
+    await queue.deliverAll();
+    expect(queue.deliveries).toEqual([
+      { jobId, attempt: undefined },
+      { jobId, attempt: 1 },
+    ]);
+
+    // Second failure exhausts maxAttempts; no third delivery is queued.
+    await queue.deliverAll();
+    expect(queue.deliveries).toHaveLength(2);
   });
 });
 

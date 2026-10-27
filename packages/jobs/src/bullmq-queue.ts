@@ -1,6 +1,6 @@
 import { Queue as BullQueue, Worker, type Job } from "bullmq";
 import IORedis from "ioredis";
-import { HandlerRegistry, type EnqueueOptions, type JobEnvelope, type JobHandler, type Queue } from "./queue.js";
+import { HandlerRegistry, deliveryJobId, type EnqueueOptions, type JobEnvelope, type JobHandler, type Queue } from "./queue.js";
 
 /**
  * Production queue: BullMQ over Redis (ADR-016).
@@ -39,18 +39,23 @@ export class BullMQQueue implements Queue {
   }
 
   async enqueue(jobType: string, payload: unknown, opts: EnqueueOptions = {}): Promise<string> {
-    const jobId = (payload as { jobId?: string } | null)?.jobId ?? crypto.randomUUID();
+    const durableJobId = (payload as { jobId?: string } | null)?.jobId ?? crypto.randomUUID();
+    const attempt = opts.attempt ?? 0;
+    // One BullMQ job per durable attempt. Re-adding the previous id (or a
+    // stable id with removeOnComplete:false) is deduped, which is how retries
+    // used to get stuck in RETRYING. The durable row remains the source of truth.
+    const id = deliveryJobId(durableJobId, attempt);
     await this.producer(jobType).add(
       jobType,
-      { id: jobId, type: jobType, payload, attemptsMade: 0 },
+      { id: durableJobId, type: jobType, payload, attemptsMade: attempt },
       {
-        jobId,
+        jobId: id,
         delay: opts.delayMs ?? 0,
         attempts: opts.attempts ?? this.defaultAttempts,
         removeOnComplete: false,
       },
     );
-    return jobId;
+    return durableJobId;
   }
 
   registerWorker(jobType: string, handler: JobHandler): void {

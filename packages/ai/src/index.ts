@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   aiDisclosureSchema,
   chapterContentSchema,
+  coverBriefSchema,
   coverOutputSchema,
   editorialOutputSchema,
   factCheckOutputSchema,
@@ -9,6 +10,7 @@ import {
   planOutputSchema,
   researchOutputSchema,
   type ChapterContent,
+  type CoverBrief,
   type CoverOutput,
   type MetadataOutput,
   type PlanOutput,
@@ -68,7 +70,17 @@ export interface ResearchProvider {
 
 export interface ImageProvider {
   readonly name: string;
-  generateCover(input: { title: string; subtitle: string; palette: string[] }): Promise<{
+  /**
+   * Renders a full cover from a structured brief. Real providers may call an
+   * image model; the mock renders a deterministic SVG. The LLM never writes
+   * markup, so a model cannot emit a malformed or unservable cover.
+   */
+  generateCover(input: {
+    title: string;
+    subtitle: string;
+    authorName: string;
+    brief: CoverBrief;
+  }): Promise<{
     output: CoverOutput;
     usage: Usage;
   }>;
@@ -256,14 +268,11 @@ export class MockLLMProvider implements LLMProvider {
         });
 
       case "cover":
-        return coverOutputSchema.parse({
-          brief: {
-            concept: `A clean, high-contrast cover signalling a practical guide to ${topic}.`,
-            palette: ["#1f2937", "#f9fafb", "#b45309"],
-            typographyNote: "Large serif title, generous margins.",
-          },
-          svg: coverSvg(title, String(ctx.subtitle ?? ""), ["#1f2937", "#f9fafb", "#b45309"], seed),
-          mimeType: "image/svg+xml",
+        return coverBriefSchema.parse({
+          palette: ["#1f2937", "#f9fafb", "#b45309"],
+          motif: `A practical guide to ${topic}`,
+          titleTreatment: "serif",
+          rationale: `A clean, high-contrast cover signalling an applied guide to ${topic}.`,
         });
 
       default:
@@ -272,16 +281,67 @@ export class MockLLMProvider implements LLMProvider {
   }
 }
 
-function coverSvg(title: string, subtitle: string, palette: string[], seed: string): string {
-  const [bg = "#1f2937", fg = "#f9fafb", accent = "#b45309"] = palette;
+function coverSvg(input: { title: string; subtitle: string; authorName: string; brief: CoverBrief }): string {
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const [bg = "#1f2937", fg = "#f9fafb", accent = fg] = input.brief.palette;
+
+  /** Word-wrap without measuring glyphs: conservative character counts. */
+  const wrap = (text: string, maxChars: number, maxLines: number): string[] => {
+    const words = text.trim().split(/\s+/).filter(Boolean);
+    const all: string[] = [];
+    let current = "";
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (candidate.length > maxChars && current) {
+        all.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
+    }
+    if (current) all.push(current);
+    const lines = all.slice(0, maxLines);
+    if (all.length > maxLines && lines.length > 0) {
+      lines[lines.length - 1] = `${lines[lines.length - 1]}…`;
+    }
+    return lines.length > 0 ? lines : [text.slice(0, maxChars)];
+  };
+
+  const treatment = input.brief.titleTreatment;
+  const title =
+    treatment === "uppercase" ? input.title.toUpperCase() : input.title;
+  const family =
+    treatment === "sans-serif"
+      ? "Helvetica, Arial, sans-serif"
+      : "Georgia, 'Times New Roman', serif";
+  const weight = treatment === "display" ? 700 : 600;
+  const spacing = treatment === "uppercase" ? 4 : 1;
+  const titleLines = wrap(title, 17, 3);
+  const titleSize = titleLines.length >= 3 ? 100 : 118;
+  const titleLineHeight = titleSize + 22;
+  const titleTop = 980 - ((titleLines.length - 1) * titleLineHeight) / 2;
+
+  const subtitleLines = wrap(input.subtitle, 34, 3);
+  const subtitleTop = titleTop + titleLines.length * titleLineHeight + 40;
+
   return [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="2560" viewBox="0 0 1600 2560" data-seed="${esc(seed)}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="2560" viewBox="0 0 1600 2560" role="img" aria-label="${esc(input.title)}">`,
+    `<title>${esc(input.title)}</title>`,
     `<rect width="1600" height="2560" fill="${esc(bg)}"/>`,
     `<rect x="80" y="80" width="1440" height="2400" fill="none" stroke="${esc(accent)}" stroke-width="8"/>`,
-    `<text x="800" y="1100" font-family="Georgia, serif" font-size="120" fill="${esc(fg)}" text-anchor="middle">${esc(title.slice(0, 28))}</text>`,
-    `<text x="800" y="1280" font-family="Georgia, serif" font-size="52" fill="${esc(accent)}" text-anchor="middle">${esc(subtitle.slice(0, 52))}</text>`,
+    `<rect x="80" y="80" width="1440" height="140" fill="${esc(accent)}"/>`,
+    `<text x="800" y="176" font-family="Helvetica, Arial, sans-serif" font-size="40" letter-spacing="10" fill="${esc(bg)}" text-anchor="middle">${esc(input.brief.motif.toUpperCase().slice(0, 52))}</text>`,
+    ...titleLines.map(
+      (line, i) =>
+        `<text x="800" y="${Math.round(titleTop + i * titleLineHeight)}" font-family="${family}" font-size="${titleSize}" font-weight="${weight}" letter-spacing="${spacing}" fill="${esc(fg)}" text-anchor="middle">${esc(line)}</text>`,
+    ),
+    ...subtitleLines.map(
+      (line, i) =>
+        `<text x="800" y="${Math.round(subtitleTop + i * 70)}" font-family="Helvetica, Arial, sans-serif" font-size="52" fill="${esc(accent)}" text-anchor="middle">${esc(line)}</text>`,
+    ),
+    `<rect x="650" y="2160" width="300" height="6" fill="${esc(accent)}"/>`,
+    `<text x="800" y="2260" font-family="Helvetica, Arial, sans-serif" font-size="56" letter-spacing="2" fill="${esc(fg)}" text-anchor="middle">${esc(input.authorName.slice(0, 60))}</text>`,
     `</svg>`,
   ].join("");
 }
@@ -336,14 +396,30 @@ export class MockResearchProvider implements ResearchProvider {
 export class MockImageProvider implements ImageProvider {
   readonly name = "mock-image";
 
-  async generateCover(input: { title: string; subtitle: string; palette: string[] }) {
-    const result = await new MockLLMProvider().generate({
-      task: "cover",
-      seed: `${input.title}:${input.subtitle}`,
-      schema: coverOutputSchema,
-      context: { title: input.title, subtitle: input.subtitle },
+  async generateCover(input: {
+    title: string;
+    subtitle: string;
+    authorName: string;
+    brief: CoverBrief;
+  }) {
+    // Deterministic: same brief + title + author produces byte-identical SVG.
+    // No model is asked to emit markup, so the cover is always servable.
+    const svg = coverSvg(input);
+    const output = coverOutputSchema.parse({
+      brief: input.brief,
+      svg,
+      mimeType: "image/svg+xml",
     });
-    return { output: result.output, usage: result.usage };
+    return {
+      output,
+      usage: {
+        provider: this.name,
+        model: "deterministic-svg",
+        inputUnits: 0,
+        outputUnits: svg.length,
+        estimatedCost: 0,
+      },
+    };
   }
 }
 

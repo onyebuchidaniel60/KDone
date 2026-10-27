@@ -79,7 +79,9 @@ export class Worker {
 
     for (const job of stale) {
       await this.jobs.markQueued(job.id);
-      await this.queue.enqueue(job.jobType, { jobId: job.id });
+      // `attempts` is the number already made, so this delivery id is distinct
+      // from the attempt that was abandoned mid-flight.
+      await this.queue.enqueue(job.jobType, { jobId: job.id }, { attempt: job.attempts });
       recovered.push(job.id);
     }
 
@@ -154,26 +156,26 @@ export class Worker {
       const message = error instanceof Error ? error.message : String(error);
 
       const outcome = await this.jobs.markFailed(job.id, { code, message });
+      const record = await this.jobs.findById(job.id);
 
       if (outcome === "RETRYING") {
-        // Re-deliver so the next attempt actually happens.
-        await this.queue.enqueue(job.type, { jobId: job.id });
+        // Re-deliver so the next attempt actually happens. The attempt number
+        // comes from the durable row; BullMQ requires a fresh job id per
+        // attempt or the re-add is deduped and the job stays RETRYING forever.
+        await this.queue.enqueue(job.type, { jobId: job.id }, { attempt: record?.attempts ?? 0 });
       }
 
       // Never report success on failure.
-      if (outcome === "FAILED") {
-        const record = await this.jobs.findById(job.id);
-        if (record) {
-          await this.orchestrator.audit({
-            userId: record.userId,
-            bookProjectId: record.bookProjectId,
-            actorType: "system",
-            eventType: "job.failed",
-            entityType: "generation_job",
-            entityId: job.id,
-            metadata: { jobType: job.type, code, message },
-          });
-        }
+      if (outcome === "FAILED" && record) {
+        await this.orchestrator.audit({
+          userId: record.userId,
+          bookProjectId: record.bookProjectId,
+          actorType: "system",
+          eventType: "job.failed",
+          entityType: "generation_job",
+          entityId: job.id,
+          metadata: { jobType: job.type, code, message },
+        });
       }
     }
   }

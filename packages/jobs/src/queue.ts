@@ -19,6 +19,24 @@ export interface EnqueueOptions {
   delayMs?: number;
   /** Overrides the persisted maxAttempts for this delivery attempt. */
   attempts?: number;
+  /**
+   * Durable attempt number this delivery represents (0 for the first run).
+   *
+   * Queues that dedupe by id must include it in the delivery id: the worker
+   * re-enqueues a retryable failure, and a re-add with the original id would
+   * be silently dropped.
+   */
+  attempt?: number;
+}
+
+/**
+ * Queue-level delivery id for one attempt of a durable job.
+ *
+ * The durable `generation_jobs.id` never changes; each attempt needs its own
+ * queue id so BullMQ cannot dedupe a retry against the previous delivery.
+ */
+export function deliveryJobId(durableJobId: string, attempt: number): string {
+  return `${durableJobId}:attempt:${attempt}`;
 }
 
 export type JobHandler = (job: JobEnvelope) => Promise<void>;
