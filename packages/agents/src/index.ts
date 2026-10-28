@@ -1,4 +1,4 @@
-import type { ImageProvider, LLMProvider, ResearchProvider, Usage } from "@kdone/ai";
+import type { ImageProvider, LLMProvider, RenderedCover, ResearchProvider, Usage } from "@kdone/ai";
 import {
   assembledManuscriptSchema,
   chapterContentSchema,
@@ -11,7 +11,6 @@ import {
   type AssembledManuscript,
   type ChapterContent,
   type Issue,
-  type CoverOutput,
   type MetadataOutput,
   type PlanOutput,
   type ResearchOutput,
@@ -66,6 +65,7 @@ export async function planningAgent(
   ctx: AgentContext,
   research: ResearchOutput,
   targetWordCount: number,
+  chapterCount?: number | null,
 ): Promise<AgentResult<PlanOutput>> {
   const { output, usage } = await llm.generate({
     task: "plan",
@@ -76,6 +76,7 @@ export async function planningAgent(
       topic: ctx.topic,
       audience: ctx.targetReader,
       targetWordCount,
+      ...(chapterCount ? { chapterCount } : {}),
       researchSummary: research.marketSummary,
       angles: research.angles.join("; "),
     },
@@ -89,6 +90,7 @@ export interface ChapterBrief {
   ordinal: number;
   title: string;
   objective: string;
+  targetWordCount: number;
 }
 
 /**
@@ -113,6 +115,7 @@ export async function writingAgent(
       tone: ctx.toneStyle,
       chapterTitle: brief.title,
       chapterObjective: brief.objective,
+      targetWordCount: brief.targetWordCount,
       ordinal: brief.ordinal,
       priorContext: priorSummaries.map((p) => `Ch${p.ordinal}: ${p.summary}`).join(" | "),
       researchFindings: research.findings.map((f) => f.statement).join(" | "),
@@ -326,7 +329,7 @@ export async function coverAgent(
   llm: LLMProvider,
   ctx: AgentContext,
   plan: PlanOutput,
-): Promise<AgentResult<CoverOutput>> {
+): Promise<AgentResult<RenderedCover>> {
   // The LLM writes only a small art-direction brief; the image provider owns
   // the actual cover render. Asking a text model for a full SVG was both
   // token-fragile (finish_reason=length) and unreliable markup.

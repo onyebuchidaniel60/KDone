@@ -14,6 +14,8 @@ export const createBookSchema = z.object({
   targetReader: z.string().max(2000).optional(),
   genre: z.string().max(200).optional(),
   desiredLength: z.number().int().positive().max(1_000_000).optional(),
+  /** Exact chapter count; when omitted the planner decides. */
+  chapterCount: z.number().int().positive().max(100).optional(),
   toneStyle: z.string().max(500).optional(),
   authorName: z.string().max(300).optional(),
 });
@@ -183,11 +185,16 @@ export const coverBriefSchema = z.object({
 
 export type CoverBrief = z.infer<typeof coverBriefSchema>;
 
+/**
+ * Legacy JSON descriptor for a rendered cover. The live provider returns JPEG
+ * bytes separately (`RenderedCover` in @kdone/ai); this schema is kept for
+ * callers that only need the deterministic SVG source and its metadata.
+ */
 export const coverOutputSchema = z.object({
   brief: coverBriefSchema,
   /** Full-size deterministic SVG rendered by the image provider. */
   svg: z.string().min(1).max(400_000),
-  mimeType: z.string().default("image/svg+xml"),
+  mimeType: z.string().default("image/jpeg"),
 });
 
 export type CoverOutput = z.infer<typeof coverOutputSchema>;

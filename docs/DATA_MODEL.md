@@ -25,6 +25,7 @@ Fields:
 - target_reader
 - genre
 - desired_length
+- chapter_count
 - tone_style
 - author_name
 - publisher_name

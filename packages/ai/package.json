@@ -20,6 +20,7 @@
     "@kdone/shared": "workspace:*",
     "@kdone/validation": "workspace:*",
     "openai": "^5.23.2",
+    "sharp": "^0.35.5",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.25.2"
   },

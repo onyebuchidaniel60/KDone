@@ -119,7 +119,7 @@ export class KDone {
 
   async createBook(userId: string, input: {
     workingTitle: string; topic: string; targetReader?: string; genre?: string;
-    desiredLength?: number; toneStyle?: string; authorName?: string;
+    desiredLength?: number; chapterCount?: number; toneStyle?: string; authorName?: string;
   }) {
     const [book] = await this.db
       .insert(bookProjects)
@@ -130,6 +130,7 @@ export class KDone {
         targetReader: input.targetReader ?? null,
         genre: input.genre ?? null,
         desiredLength: input.desiredLength ?? null,
+        chapterCount: input.chapterCount ?? null,
         toneStyle: input.toneStyle ?? null,
         authorName: input.authorName ?? null,
       })
@@ -784,7 +785,13 @@ async editChapter(chapterId: string, userId: string, content?: string) {
       const book = await this.loadBook(bookId);
       const ctx = this.ctx(book!, bookId);
       const research = await this.loadResearchOutput(bookId);
-      const plan = await planningAgent(this.llm, ctx, research, book!.desiredLength ?? 30_000);
+      const plan = await planningAgent(
+        this.llm,
+        ctx,
+        research,
+        book!.desiredLength ?? 30_000,
+        book!.chapterCount,
+      );
       await this.persistPlan(bookId, book!.userId, plan.output);
       return {
         agentType: "planning",
@@ -807,13 +814,20 @@ async editChapter(chapterId: string, userId: string, content?: string) {
 
       const research = await this.loadResearchOutput(bookId);
       const priors = await this.loadPriorSummaries(bookId, ordinal);
+      const targetWordCount = chapter.targetWordCount ?? 0;
       const result = await writingAgent(
         this.llm, ctx,
-        { ordinal, title: chapter.title ?? `Chapter ${ordinal}`, objective: chapter.objective ?? "" },
+        {
+          ordinal,
+          title: chapter.title ?? `Chapter ${ordinal}`,
+          objective: chapter.objective ?? "",
+          targetWordCount,
+        },
         research, priors,
       );
+      const content = truncateToTarget(result.output.content, targetWordCount);
 
-      await this.persistDraft(chapter.id, bookId, book!.userId, result.output.title, result.output.content, result.generated);
+      await this.persistDraft(chapter.id, bookId, book!.userId, result.output.title, content, result.generated);
       await this.assembleIfComplete(bookId);
 
       const isLast = ordinal >= (await this.chapterCount(bookId));
@@ -901,7 +915,17 @@ async editChapter(chapterId: string, userId: string, content?: string) {
       const ctx = this.ctx(book!, bookId);
       const plan = await this.loadPlanOutput(bookId);
       const result = await coverAgent(this.imageProvider, this.llm, ctx, plan);
-      const asset = await this.storeAsset(bookId, book!.userId, "cover", "svg", result.output.svg, "image/svg+xml", result.generated, result.usage.provider, result.usage.model);
+      const asset = await this.storeAsset(
+        bookId,
+        book!.userId,
+        "cover",
+        "jpg",
+        result.output.bytes,
+        result.output.mimeType,
+        result.generated,
+        result.usage.provider,
+        result.usage.model,
+      );
       return { agentType: "cover", usage: result.usage, output: { assetId: asset.id } };
     });
 
@@ -1293,6 +1317,34 @@ async editChapter(chapterId: string, userId: string, content?: string) {
       await this.worker.runOnce(job.id);
     }
   }
+}
+
+/** Whitespace-delimited word count; good enough for sizing guardrails. */
+export function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Keeps a chapter close to its planned size. When the draft exceeds the target
+ * by more than 15%, whole paragraphs are retained in order until the target is
+ * reached; paragraphs are never cut mid-sentence. A single paragraph larger
+ * than the target is kept as-is because there is no safe cut point.
+ */
+export function truncateToTarget(content: string, targetWordCount: number, tolerance = 0.15): string {
+  if (targetWordCount <= 0) return content;
+  if (countWords(content) <= Math.floor(targetWordCount * (1 + tolerance))) return content;
+
+  const paragraphs = content.split(/\n{2,}/);
+  const kept: string[] = [];
+  let words = 0;
+  for (const paragraph of paragraphs) {
+    const paragraphWords = countWords(paragraph);
+    if (kept.length > 0 && words + paragraphWords > targetWordCount) break;
+    kept.push(paragraph);
+    words += paragraphWords;
+    if (words >= targetWordCount) break;
+  }
+  return kept.join("\n\n").trim();
 }
 
 function mapMetadata(md: MetadataOutput) {

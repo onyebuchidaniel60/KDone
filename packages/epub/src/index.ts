@@ -1,4 +1,6 @@
 import { crc32 } from "node:zlib";
+import { XMLValidator } from "fast-xml-parser";
+import MarkdownIt from "markdown-it";
 import type { AssembledManuscript, MetadataOutput } from "@kdone/validation";
 
 /*
@@ -100,6 +102,45 @@ function esc(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * Chapter bodies are authored in Markdown. CommonMark + GFM tables gives us
+ * headings, emphasis, lists, blockquotes, code and tables without hand-rolling
+ * a parser. `html: false` escapes raw HTML; `xhtmlOut: true` emits XML-safe
+ * void elements (`<br />`, `<hr />`).
+ */
+const markdown = new MarkdownIt({
+  html: false,
+  xhtmlOut: true,
+  breaks: false,
+  linkify: false,
+  typographer: false,
+});
+
+/** Drop a leading H1 (ATX or setext) so the chapter title is emitted once. */
+function stripLeadingH1(content: string): string {
+  let text = content.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+  text = text.replace(/^\n+/, "");
+  const atx = /^[ \t]{0,3}#[ \t]+[^\n]*(?:\n|$)/;
+  if (atx.test(text)) {
+    text = text.replace(atx, "");
+  } else {
+    const setext = /^[^\n]+\n[ \t]*=+[ \t]*(?:\n|$)/;
+    text = text.replace(setext, "");
+  }
+  return text.replace(/^\n+/, "");
+}
+
+/** Renders one chapter body as XHTML with exactly one H1 (the chapter title). */
+export function renderChapterBody(content: string, title: string): string {
+  const body = markdown
+    .render(stripLeadingH1(content))
+    .trim()
+    // A stray H1 later in the prose must not create a second chapter title.
+    .replace(/<h1>/g, "<h2>")
+    .replace(/<\/h1>/g, "</h2>");
+  return `<h1>${esc(title)}</h1>${body ? `\n  ${body}` : ""}`;
+}
+
 export interface EpubBuildInput {
   manuscript: AssembledManuscript;
   metadata: MetadataOutput;
@@ -170,11 +211,7 @@ export function buildEpub(input: EpubBuildInput): Uint8Array {
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head><title>${esc(c.title)}</title></head>
 <body>
-  <h1>${esc(c.title)}</h1>
-  ${c.content
-    .split(/\n{2,}/)
-    .map((p) => `<p>${esc(p.trim())}</p>`)
-    .join("\n  ")}
+  ${renderChapterBody(c.content, c.title)}
 </body>
 </html>`;
 
@@ -228,6 +265,7 @@ export function validateEpub(bytes: Uint8Array): EpubValidationResult {
   const entryCount = view.getUint16(eocdOffset + 10, true);
 
   const names: string[] = [];
+  const entryData = new Map<string, Uint8Array>();
   let position = 0;
   for (let i = 0; i < entryCount; i += 1) {
     if (view.getUint32(position, true) !== 0x04034b50) {
@@ -239,7 +277,9 @@ export function validateEpub(bytes: Uint8Array): EpubValidationResult {
     const size = view.getUint32(position + 18, true);
     const name = new TextDecoder().decode(bytes.slice(position + 30, position + 30 + nameLength));
     names.push(name);
-    position += 30 + nameLength + extraLength + size;
+    const dataStart = position + 30 + nameLength + extraLength;
+    entryData.set(name, bytes.slice(dataStart, dataStart + size));
+    position = dataStart + size;
   }
 
   if (names[0] !== "mimetype") errors.push('First ZIP entry must be "mimetype"');
@@ -257,6 +297,32 @@ export function validateEpub(bytes: Uint8Array): EpubValidationResult {
     const dataStart = 30 + nameLength + extraLength;
     const stored = new TextDecoder().decode(bytes.slice(dataStart, dataStart + size));
     if (stored !== "application/epub+zip") errors.push('mimetype must be "application/epub+zip"');
+  }
+
+  const decoder = new TextDecoder();
+  for (const name of names.filter((n) => n.endsWith(".xhtml"))) {
+    const data = entryData.get(name);
+    if (!data) continue;
+    const text = decoder.decode(data);
+
+    const xml = XMLValidator.validate(text);
+    if (xml !== true) {
+      errors.push(`${name} is not well-formed XHTML: ${xml.err.msg} (line ${xml.err.line})`);
+    }
+
+    if (!/\/chapter\d+\.xhtml$/.test(name)) continue;
+    const h1Count = (text.match(/<h1[\s>]/g) ?? []).length;
+    if (h1Count !== 1) errors.push(`${name} must contain exactly one <h1> (found ${h1Count})`);
+
+    const leaks: Array<[RegExp, string]> = [
+      [/<p>\s*#/, "literal Markdown heading"],
+      [/<p>\s*[-*+]\s/, "literal Markdown list item"],
+      [/\*\*/, "literal Markdown bold marker"],
+      [/<p>\s*\|/, "literal Markdown table row"],
+    ];
+    for (const [pattern, label] of leaks) {
+      if (pattern.test(text)) errors.push(`${name} contains ${label}`);
+    }
   }
 
   if (entryCount < 5) warnings.push("Very few entries; confirm the manuscript has content");

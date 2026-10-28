@@ -37,10 +37,15 @@ Request:
   "targetReader": "",
   "genre": "",
   "desiredLength": 70000,
+  "chapterCount": 8,
   "toneStyle": "",
   "authorName": ""
 }
 ```
+
+`chapterCount` is optional. When supplied, the planner is instructed to
+produce exactly that many chapters; when omitted, the planner chooses the
+count.
 
 Returns the created project in `DRAFT`.
 

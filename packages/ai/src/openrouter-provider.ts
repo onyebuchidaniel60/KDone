@@ -302,24 +302,35 @@ function researchPrompt(ctx: Record<string, unknown>): string {
 }
 
 function planPrompt(ctx: Record<string, unknown>): string {
+  const chapterCount = Number(ctx.chapterCount ?? 0);
+  const countInstruction =
+    chapterCount > 0
+      ? `Produce exactly ${chapterCount} chapters (ordinals 1 through ${chapterCount}). Each chapter targetWordCount should be approximately ${Math.round(Number(ctx.targetWordCount) / chapterCount)} words.`
+      : "Choose a chapter count that serves the material and the target length.";
   return [
     `Design the book plan for "${String(ctx.title)}" - a practical guide about ${String(ctx.topic)} for ${String(ctx.audience)}.`,
     `Research summary: ${String(ctx.researchSummary)}`,
     `Angles: ${String(ctx.angles)}`,
     `Target the manuscript at roughly ${String(ctx.targetWordCount)} words; every chapter targetWordCount must be substantial and together should sum close to that total.`,
+    countInstruction,
     "Provide a strong final title (you may improve the working title), a subtitle, a positioning statement, and a one-sentence bookPromise.",
     "Chapters must follow a logical process arc for the reader.",
   ].join(" ");
 }
 
 function chapterPrompt(ctx: Record<string, unknown>): string {
+  const target = Number(ctx.targetWordCount ?? 0);
+  const sizing =
+    target > 0
+      ? `Aim for approximately ${target} words, within +/- 10%. Do not pad, do not add filler, and do not exceed the target by more than 10%.`
+      : "Aim for at least 800 words.";
   return [
     `Write the complete chapter "${String(ctx.chapterTitle)}" for the book "${String(ctx.bookTitle)}" about ${String(ctx.topic)}.`,
     `Chapter objective: ${String(ctx.chapterObjective)}`,
     `Chapter number: ${String(ctx.ordinal)}. Audience: ${String(ctx.audience)}. Tone: ${String(ctx.tone)}.`,
     `Prior-chapter context (do not repeat these summaries verbatim): ${String(ctx.priorContext)}`,
     `Research findings you may build on (reference by index only if truly used): ${String(ctx.researchFindings)}`,
-    "Return content in Markdown (headings plus paragraphs suitable for an e-reader), at least 800 words.",
+    `Return content in Markdown (headings, lists, and paragraphs suitable for an e-reader). ${sizing}`,
     "summary must be a 2-3 sentence recap. supportedBy must list the indexes (0-based) of researchFindings entries you actually used, or an empty array if none apply.",
   ].join(" ");
 }

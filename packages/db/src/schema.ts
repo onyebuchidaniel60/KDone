@@ -127,6 +127,8 @@ export const bookProjects = pgTable(
     targetReader: text("target_reader"),
     genre: text("genre"),
     desiredLength: integer("desired_length"),
+    /** Exact chapter count requested by the user; null lets the planner decide. */
+    chapterCount: integer("chapter_count"),
     toneStyle: text("tone_style"),
     authorName: text("author_name"),
     publisherName: text("publisher_name"),

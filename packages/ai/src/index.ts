@@ -3,7 +3,6 @@ import {
   aiDisclosureSchema,
   chapterContentSchema,
   coverBriefSchema,
-  coverOutputSchema,
   editorialOutputSchema,
   factCheckOutputSchema,
   metadataOutputSchema,
@@ -11,11 +10,11 @@ import {
   researchOutputSchema,
   type ChapterContent,
   type CoverBrief,
-  type CoverOutput,
   type MetadataOutput,
   type PlanOutput,
   type ResearchOutput,
 } from "@kdone/validation";
+import sharp from "sharp";
 import { OpenRouterProvider, OpenRouterResearchProvider } from "./openrouter-provider.js";
 import { selectLLM } from "./select-llm.js";
 import type { z } from "zod";
@@ -68,12 +67,27 @@ export interface ResearchProvider {
   }>;
 }
 
+/**
+ * A cover is stored as JPEG bytes. KDP's current cover specification accepts
+ * TIFF or JPEG only (PNG is not listed), so the deterministic SVG layout is
+ * rasterized to JPEG before it reaches storage.
+ */
+export interface RenderedCover {
+  brief: CoverBrief;
+  /** Deterministic SVG source, retained for provenance/debugging. */
+  svg: string;
+  bytes: Uint8Array;
+  mimeType: "image/jpeg";
+  width: number;
+  height: number;
+}
+
 export interface ImageProvider {
   readonly name: string;
   /**
    * Renders a full cover from a structured brief. Real providers may call an
-   * image model; the mock renders a deterministic SVG. The LLM never writes
-   * markup, so a model cannot emit a malformed or unservable cover.
+   * image model; the mock renders a deterministic SVG and rasterizes it. The
+   * LLM never writes markup, so a model cannot emit a malformed cover.
    */
   generateCover(input: {
     title: string;
@@ -81,7 +95,7 @@ export interface ImageProvider {
     authorName: string;
     brief: CoverBrief;
   }): Promise<{
-    output: CoverOutput;
+    output: RenderedCover;
     usage: Usage;
   }>;
 }
@@ -175,34 +189,39 @@ export class MockLLMProvider implements LLMProvider {
           angles: [`A practical, process-first treatment of ${topic} for ${audience}.`],
         });
 
-      case "plan":
+      case "plan": {
+        const totalWords = Number(ctx.targetWordCount ?? 30_000);
+        const requestedCount = Number(ctx.chapterCount ?? 0);
+        const chapterCount = requestedCount > 0 ? Math.min(100, Math.max(1, Math.round(requestedCount))) : 3;
+        const baseWords = Math.max(1, Math.floor(totalWords / chapterCount));
+        const titles = [
+          "Why this matters",
+          "The core process",
+          "Putting it to work",
+          "Practice and pitfalls",
+          "Scaling what works",
+          "Measuring results",
+          "Common questions",
+          "Next steps",
+        ];
         return planOutputSchema.parse({
           title,
           subtitle: `A practical guide for ${audience}`,
           positioning: `A process-first ${topic} guide written for ${audience}.`,
           bookPromise: `Give ${audience} a repeatable way to apply ${topic}.`,
-          targetWordCount: Number(ctx.targetWordCount ?? 30_000),
-          chapters: [
-            {
-              ordinal: 1,
-              title: "Why this matters",
-              objective: `Establish the reader's problem around ${topic}.`,
-              targetWordCount: 3000,
-            },
-            {
-              ordinal: 2,
-              title: "The core process",
-              objective: "Teach the repeatable process step by step.",
-              targetWordCount: 5000,
-            },
-            {
-              ordinal: 3,
-              title: "Putting it to work",
-              objective: "Apply the process to realistic scenarios.",
-              targetWordCount: 4000,
-            },
-          ],
+          targetWordCount: totalWords,
+          chapters: Array.from({ length: chapterCount }, (_, i) => ({
+            ordinal: i + 1,
+            title: titles[i] ?? `Chapter ${i + 1}: ${topic}`,
+            objective:
+              i === 0
+                ? `Establish the reader's problem around ${topic}.`
+                : `Teach step ${i + 1} of the repeatable process for ${topic}.`,
+            targetWordCount:
+              i === chapterCount - 1 ? totalWords - baseWords * (chapterCount - 1) : baseWords,
+          })),
         });
+      }
 
       case "chapter": {
         const body = Array.from(
@@ -402,28 +421,36 @@ export class MockImageProvider implements ImageProvider {
     authorName: string;
     brief: CoverBrief;
   }) {
-    // Deterministic: same brief + title + author produces byte-identical SVG.
-    // No model is asked to emit markup, so the cover is always servable.
+    // Deterministic: same brief + title + author produces the same SVG, and
+    // the same SVG produces the same JPEG. No model writes markup.
     const svg = coverSvg(input);
-    const output = coverOutputSchema.parse({
-      brief: input.brief,
-      svg,
-      mimeType: "image/svg+xml",
-    });
+    const image = sharp(Buffer.from(svg, "utf8"));
+    const metadata = await image.metadata();
+    if (metadata.width !== 1600 || metadata.height !== 2560) {
+      throw new Error(`cover render is ${metadata.width}x${metadata.height}, expected 1600x2560`);
+    }
+    const bytes = await image.jpeg({ quality: 90, chromaSubsampling: "4:4:4" }).toBuffer();
     return {
-      output,
+      output: {
+        brief: input.brief,
+        svg,
+        bytes,
+        mimeType: "image/jpeg" as const,
+        width: 1600,
+        height: 2560,
+      },
       usage: {
         provider: this.name,
-        model: "deterministic-svg",
+        model: "deterministic-svg-to-jpeg",
         inputUnits: 0,
-        outputUnits: svg.length,
+        outputUnits: bytes.length,
         estimatedCost: 0,
       },
     };
   }
 }
 
-export type { ChapterContent, CoverOutput, MetadataOutput, PlanOutput, ResearchOutput };
+export type { ChapterContent, MetadataOutput, PlanOutput, ResearchOutput };
 
 export type {
   OpenRouterClientShape,

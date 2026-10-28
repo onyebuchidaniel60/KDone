@@ -1,0 +1,1 @@
+ALTER TABLE "book_projects" ADD COLUMN "chapter_count" integer;

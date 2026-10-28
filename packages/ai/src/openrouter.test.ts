@@ -181,6 +181,60 @@ describe("OpenRouterProvider (mocked client)", () => {
     expect(dumped).not.toContain('"anyOf":[{"type":"null"}]');
   });
 
+  it("passes the chapter target word count and +/- 10% instruction to the prompt", async () => {
+    const body = await taskPayload("chapter");
+    const { client, calls } = fakeClient(async () => fakeCompletion(body));
+    const provider = new OpenRouterProvider({ apiKey: "k", client, retryDelay: async () => {} });
+
+    await provider.generate({
+      task: "chapter",
+      seed: "seed",
+      schema: chapterContentSchema,
+      context: {
+        chapterTitle: "Getting Started",
+        chapterObjective: "Establish the problem.",
+        bookTitle: "A Practical Guide",
+        topic: "process design",
+        audience: "small teams",
+        tone: "practical",
+        ordinal: 1,
+        priorContext: "",
+        researchFindings: "",
+        targetWordCount: 2000,
+      },
+    });
+
+    const prompt = String(calls[0]!.params.messages[1]!.content);
+    expect(prompt).toContain("approximately 2000 words");
+    expect(prompt).toContain("+/- 10%");
+    expect(prompt).toContain("do not exceed the target by more than 10%");
+  });
+
+  it("passes an exact chapter count to the plan prompt", async () => {
+    const body = await taskPayload("plan");
+    const { client, calls } = fakeClient(async () => fakeCompletion(body));
+    const provider = new OpenRouterProvider({ apiKey: "k", client, retryDelay: async () => {} });
+
+    await provider.generate({
+      task: "plan",
+      seed: "seed",
+      schema: planOutputSchema,
+      context: {
+        title: "A Practical Guide",
+        topic: "process design",
+        audience: "small teams",
+        targetWordCount: 16000,
+        chapterCount: 8,
+        researchSummary: "A summary.",
+        angles: "A practical angle.",
+      },
+    });
+
+    const prompt = String(calls[0]!.params.messages[1]!.content);
+    expect(prompt).toContain("exactly 8 chapters");
+    expect(prompt).toContain("approximately 2000 words");
+  });
+
   it("throws an LLMRefusalError when the model refuses", async () => {
     const { client } = fakeClient(async () =>
       fakeCompletion("", { refusal: "I cannot comply with this request." }),
