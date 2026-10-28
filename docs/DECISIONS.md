@@ -150,3 +150,11 @@ This document records durable decisions. Do not remove an old decision merely be
 **Reason:** The V1 implementation reached `PRODUCTION` but had no trigger to advance to `QA`, so the public API could not complete the lifecycle from production through approval. Found during the first real-book run.
 
 **Effect:** Adds a state-machine trigger. No existing transitions change; this fills a gap. The EPUB handler advances `EDITING → PRODUCTION → QA` (system actor, job id attached) only when the full production artifact set (manuscript, metadata, cover, EPUB) exists; a replay is a guarded no-op rather than an invalid transition.
+
+## ADR-023 — KDP cover output is JPEG, not PNG
+
+**Decision:** The deterministic cover renderer keeps SVG as its layout source and rasterizes it to a 1600×2560 JPEG (quality 90, 4:4:4, sRGB, 72 dpi) before storage. The stored asset is `image/jpeg` with a `.jpg` storage key.
+
+**Reason:** The iteration-2 brief requested a PNG cover. The current official KDP eBook cover specification (help topic G200645690) accepts **TIFF or JPEG only**, at 1600×2560, 1.6:1, 72 dpi, RGB, under 50 MB. PNG is not an accepted format. The external KDP specification is the source of truth under the repository's KDP rules, so JPEG wins. The conflict is recorded here rather than silently changing the requested format.
+
+**Effect:** `MockImageProvider.generateCover` now returns JPEG bytes; the cover tests assert dimensions, JPEG magic bytes, and deterministic output. Preflight still checks artifact existence/provenance, not cover format or dimensions; those artifact-level checks remain on the backlog (QA-01).

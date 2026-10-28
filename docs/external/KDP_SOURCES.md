@@ -61,6 +61,18 @@ Use for the authoritative set of book-detail/metadata help pages.
 
 ## Upload, EPUB, preview, and quality
 
+### Cover Specifications
+
+https://kdp.amazon.com/en_US/help/topic/G200645690
+
+Use for:
+
+- eBook cover format and dimensions
+- color mode, resolution, and file-size limits
+- cover/text consistency
+
+Current key rule (verified 2026-10-28): eBook covers must be **TIFF or JPEG**, 1600×2560 pixels, 1.6:1 aspect ratio, 72 dpi, RGB, and under 50 MB. PNG and SVG are not accepted. The deterministic renderer therefore stores JPEG and keeps SVG only as its internal layout source (ADR-023).
+
 ### Upload and Preview Book Content
 
 https://kdp.amazon.com/en_US/help/topic/G200641240
