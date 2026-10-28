@@ -53,7 +53,7 @@ describe("MockImageProvider (deterministic SVG -> JPEG)", () => {
     expect(first.usage.model).toBe("deterministic-svg-to-jpeg");
     expect(first.usage.estimatedCost).toBe(0);
     expect(first.usage.outputUnits).toBeGreaterThan(0);
-  });
+  }, 30_000);
 
   it("escapes markup instead of embedding caller text as elements", async () => {
     const provider = new MockImageProvider();

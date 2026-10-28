@@ -14,7 +14,6 @@ import {
   type PlanOutput,
   type ResearchOutput,
 } from "@kdone/validation";
-import sharp from "sharp";
 import { OpenRouterProvider, OpenRouterResearchProvider } from "./openrouter-provider.js";
 import { selectLLM } from "./select-llm.js";
 import type { z } from "zod";
@@ -423,6 +422,9 @@ export class MockImageProvider implements ImageProvider {
   }) {
     // Deterministic: same brief + title + author produces the same SVG, and
     // the same SVG produces the same JPEG. No model writes markup.
+    // Imported lazily so the web app (which never renders covers) does not
+    // load a native module in its serverless runtime.
+    const { default: sharp } = await import("sharp");
     const svg = coverSvg(input);
     const image = sharp(Buffer.from(svg, "utf8"));
     const metadata = await image.metadata();
