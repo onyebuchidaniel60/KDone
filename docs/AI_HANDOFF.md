@@ -272,9 +272,9 @@ editorial AgentRun cost.
   HEAD `98b9994` (runtime code `e0bc85b` plus docs).
 - Git auto-deployment `dpl_74qWLAfKcJ6NpBaKajEhQyrNUhgj`,
   `https://kdone-k4xho6ywr-uhhh2.vercel.app`, status **READY**, built from
-  `d5d089b` (the deployment-record docs commit). It currently holds the
-  `kdone.vercel.app` / `kdone-uhhh2.vercel.app` aliases; the alias advances
-  with docs-only commits, while both deployments serve the same runtime.
+  `d5d089b` (the deployment-record docs commit). It held the
+  `kdone.vercel.app` / `kdone-uhhh2.vercel.app` aliases when verified; later
+  docs-only commits advance the alias while serving the same runtime.
 - Both URLs return HTTP 200. This verifies the `sharp` runtime fix and the
   EPUB/title/cover code deploy cleanly. It does **not** re-verify job delivery
   through the deployed queue; that remains blocked by the Upstash request cap
