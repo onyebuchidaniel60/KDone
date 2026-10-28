@@ -1,22 +1,218 @@
 # KDone — AI Handoff
 
-## Current state (2026 iteration — queue fix verified; real LLM researching live)
+## First real-book validation through the live deployment (2026-10-28)
+
+**Verdict: lifecycle GO; publishable artifacts NO-GO.** The complete lifecycle
+ran through the public API against the production deployment with a fresh
+account and real providers: research → plan → 10 chapters → QA → metadata →
+cover → EPUB → preflight → human approval → KDP prepare. Every one of the 16
+jobs succeeded on attempt 1 and the state machine logged every transition.
+However, the two artifacts a human would upload to KDP are not submission
+ready: **the cover is SVG and KDP accepts only TIFF/JPEG**, and **the EPUB
+contains literal Markdown instead of rendered XHTML**. No fixes were applied
+during this run; the findings below are the backlog seed.
+
+### Run identity and authentication
+
+- Live URL: https://kdone-uhhh2.vercel.app (HTTP 200).
+- Deployment commit: `803065c2fbd26beb3d9fdc625df15a1088644d6f` (matches git
+  HEAD). Vercel metadata still reports `gitDirty: "1"`, but the deployment SHA
+  is exactly HEAD.
+- Auth: fresh account via `POST /api/register`, then the real Auth.js
+  Credentials flow (`GET /api/auth/csrf` → `POST
+  /api/auth/callback/credentials`) with the returned session cookie. **No
+  `x-kdone-user-id` header and no forged session cookie.** User
+  `dfe7dfec-b865-476d-a6aa-cb7b9316d030`.
+- Book: `b5116235-97b6-4927-9269-34175220f4db`, "AI for Small Business: A
+  Practical Guide to Using AI to Work Smarter", genre Business / Non-fiction,
+  target reader "Small business owners with no technical background", tone
+  "Practical, concrete, no hype", desired length 16,000 words.
+- Final book status: `USER_APPROVED`. KDP mode: **prepare only**;
+  `externalReference` is null; nothing was submitted to Amazon.
+
+### Stage results
+
+| Stage | Job | Attempts | Duration | Recorded cost | Result |
+|---|---|---|---:|---:|---|
+| Research | `9628c82d-ae3f-43be-83d4-3ce4f634ddcc` | 1 | 37.6 s | $0.00419775 | 3 sources, 5 findings (4 source-backed, 1 honest gap) |
+| Planning | `2197b59a-bd5b-4a89-9df1-6cc5de19baf7` | 1 | 19.6 s | $0.023716 | 10 chapters, targets 1,300–1,800, sum 16,000 |
+| Writing | 10 jobs (`44414f4b…` … `add08181…`) | 1 each | 592.8 s run / 601.0 s wall | $0.923404 | 10/10 drafts, assembled to 29,147 words |
+| QA | `5866f5f9-4189-4869-a767-4131d8cd1ef4` | 1 | 63.7 s | $0.014926 | 20 issues: 0 critical / 10 warning / 10 suggestion |
+| Metadata | `55c32cb8-6e7e-4b7a-acac-21b32805886d` | 1 | 9.9 s | $0.0019185 | metadata v1 |
+| Cover | `eb6b8a4f-a2e0-4aa4-ba85-2f0400c47c66` | 1 | 9.6 s | $0.001415 | cover v1, SVG |
+| EPUB | `3ab84dfc-2c1b-4ee1-ac70-a0c5422f18b7` | 1 | 4.9 s | $0 | EPUB v1, 14 ZIP entries |
+
+- **Recorded run cost: $0.96957725** across 16 `agent_runs`; recorded agent
+  duration 738,166 ms. Writing is 95.2% of the cost.
+- **End-to-end wall time: 30 m 26 s** (book created `23:41:12.963Z`, KDP
+  package prepared `00:11:38.772Z`). Research→EDITING was 21 m 04 s. The run
+  included a 9 m 42 s human pause between research-ready and plan approval and
+  a 2 m 04 s pause before QA; neither is agent execution time.
+- **Every job succeeded on attempt 1; 0 failures and 0 retries.**
+- QA cost is understated: only the fact-check call (`openai/gpt-5-mini`,
+  40,864 in / 2,355 out) was recorded, while the editorial call
+  (`openai/gpt-5.4`) was not recorded as an `agent_run` (see P2 below).
+- Database delta against the pre-run baseline: books 14→15, generation jobs
+  25→41, agent runs 27→43, recorded cost $0.46822525→$1.43780250 (exactly
+  +$0.96957725).
+
+### Manuscript sizing
+
+The planner honored the 16,000-word total but divided it into 10 chapters,
+and the writer ignored the per-chapter target and only obeyed a prompt-level
+"at least 800 words" floor. Every chapter overshot its target.
+
+| Ch | Title | Target | Actual | Delta |
+|---:|---|---:|---:|---:|
+| 1 | AI Without the Hype | 1,300 | 2,782 | +114.0% |
+| 2 | Find Your Best First AI Use Case | 1,500 | 2,536 | +69.1% |
+| 3 | Prompting and Workflow Design That Produce Reliable Results | 1,700 | 2,828 | +66.4% |
+| 4 | Create Better Marketing in Less Time | 1,800 | 3,164 | +75.8% |
+| 5 | Improve Sales and Customer Service | 1,700 | 2,604 | +53.2% |
+| 6 | Reduce Everyday Administrative Work | 1,500 | 3,077 | +105.1% |
+| 7 | Use AI Safely Around Bookkeeping and Business Numbers | 1,500 | 2,312 | +54.1% |
+| 8 | Build Simple No-Code Automations | 1,700 | 3,131 | +84.2% |
+| 9 | Protect Data, Quality, and Customer Trust | 1,500 | 3,318 | +121.2% |
+| 10 | Your 30-Day AI Action Plan | 1,800 | 3,395 | +88.6% |
+| **Total** | | **16,000** | **29,147** | **+82.2%** |
+
+Requested brief was 8 chapters × 2,000 words; the planner produced 10 ×
+1,300–1,800. That is a finding, not a failed stage, so the run proceeded with
+all 10 chapters and did not re-plan.
+
+### Artifacts, provenance, and transitions
+
+| Artifact | ID | v | Size / MIME | Storage key | Provenance |
+|---|---|---:|---|---|---|
+| Manuscript | `f9e75260-9429-4f1c-8ffa-e10bd86ca7be` | 1 | 29,147 words | DB row, `ASSEMBLED` | — |
+| Metadata | `762f12bf-873b-4e12-bfcb-fba5a679460f` | 1 | title + 7 keywords + 3 categories, `ai_generated` | DB row | — |
+| Cover | `dfbd85d8-987d-443a-90fc-f0f0b983cb05` | 1 | 1,756 B / `image/svg+xml` | `books/b5116235-97b6-4927-9269-34175220f4db/cover/v1.svg` | `da7cd111-b57b-479c-93ec-fd09b0c0526d`, `openrouter+mock-image` |
+| EPUB | `58f36720-7120-4c84-855d-c13607f30c1b` | 1 | 206,635 B / `application/epub+zip` | `books/b5116235-97b6-4927-9269-34175220f4db/epub/v1.epub` | `773ef66b-6136-4fa6-bff2-5ead2733698b`, `deterministic` |
+
+- The EPUB is a valid ZIP: `mimetype` is the first entry and stored
+  uncompressed; 14 entries = mimetype, container, OPF, nav, 10 chapters.
+- The cover SVG is 1600×2560 (correct KDP dimensions and ratio), uses only
+  internal shapes/text, and contains no external references. Its **format** is
+  the blocker, not its dimensions.
+- State transitions (all through the central state machine):
+  `DRAFT → RESEARCHING → RESEARCH_READY → PLANNING → PLAN_READY → WRITING →
+  EDITING → PRODUCTION → QA → READY_FOR_REVIEW → USER_APPROVED`. EPUB
+  completion fired `EDITING → PRODUCTION → QA` exactly as ADR-022 specifies.
+- Preflight `preflight_runs` row: **8/8 checks passed** at
+  `2026-10-28T00:11:00.405Z` (manuscript, cover, metadata, EPUB, no critical,
+  provenance, disclosure present, disclosure truthful).
+- Approval `e4d2a753-1345-4e4e-9b56-626215122d85` binds manuscript v1,
+  metadata v1, cover v1, EPUB v1 and provenance fingerprint
+  `919f5b8468e167807a18a217397102a4617b39f0de4cea3553b7d3b843530f7b`.
+- Publishing job `a9839133-2636-492a-8426-645148fbe837`, status `PREPARED`,
+  package key `books/b5116235-97b6-4927-9269-34175220f4db/kdp/package.json`,
+  2,507 bytes, all five checklist items confirmed, disclosure
+  `requiresDisclosure: true`, `package.prepared` event recorded.
+
+### QA and fact-check results
+
+- 20 issues, all still `open`: **0 critical, 10 warning, 10 suggestion**.
+  Warnings are thematic repetition and pacing, not factual or structural
+  failures. Examples (verbatim):
+  - "Chapter 2 overlaps heavily with Chapter 1 on first-project selection,
+    low-risk tasks, reviewability, stop rules, and measurement."
+  - "Chapter 3 revisits privacy warnings several times in prompt sections and
+    workflow sections."
+  - "Chapter 10 repeats a large amount of material already covered in earlier
+    chapters: choosing one workflow, setting boundaries, creating a prompt,
+    building a checklist, measuring baseline, tracking costs, and deciding
+    whether to continue."
+- **All 20 `quality_issues.chapter_id` values are null** even though the
+  editorial output carries `chapterOrdinal`; the insert omits the mapping.
+- Fact-check: 8 claims, all `verified`, rationales present. **All 8
+  `source_id` values are null** (known P2); the source index is dropped on
+  insert, so the DB cannot join claims to the three research sources.
+- Research sources were the SBA, OpenAI and McKinsey homepages (3 rows); 5
+  findings, 4 linked to sources and 1 intentionally sourceless.
+
+### Honest quality assessment
+
+Strengths:
+
+- Every chapter follows its plan objective and has a real H2/H3 structure,
+  concrete workflows, checklists and prompt templates. Placeholders such as
+  `[specific task]` are intentional fill-in templates, not unfinished text.
+- No fabricated URLs or citations: the manuscript contains 0 URLs and 0
+  citation markers. The flip side is that it also attributes nothing (P2).
+- Voice is consistent practical second person, average sentence length 15.6
+  words, and there is no meaningful verbatim duplication: the highest shared
+  8-gram count between any two chapters is 1.
+- QA found no critical issues; the book reached human approval and KDP prepare
+  without bypassing the approval gate.
+
+Weaknesses:
+
+- Length is the biggest product defect: +82.2% over target and +53% to +121%
+  per chapter. This doubles writing cost and produces a 29k-word book from a
+  16k brief.
+- Thematic repetition is real (10 QA warnings). Chapters 1/2, 7/9 and 10
+  restate boundaries, privacy cautions and action-plan steps instead of
+  advancing them.
+- Readability is below the nontechnical promise: Flesch reading ease ranges
+  **28.8–46.8** ("difficult"/college), despite the audience being nontechnical
+  small-business owners.
+- The EPUB is not reader-ready: 288 paragraphs begin with literal `#`
+  (273 with `##`), 131 with `-`, 5 with `|` (Markdown tables), and there are
+  464 literal `**` markers. Chapter XHTML also duplicates the title as an
+  `<h1>` plus a literal `<p># Chapter …</p>`.
+- The cover dimensions are right but the file is SVG; KDP's eBook cover spec
+  says: "TIFF (.tif/.tiff) or JPEG (.jpeg/.jpg) format"
+  (https://kdp.amazon.com/en_US/help/topic/G200645690).
+- No title page/copyright/front matter in the EPUB, and `dcterms:modified` is
+  hardcoded to `2000-01-01T00:00:00Z`.
+
+### Backlog seed (P0–P3)
+
+Priorities: **P0** blocks a KDP-uploadable/readable deliverable; **P1** is a
+major product/quality gap; **P2** is correctness, provenance or analytics;
+**P3** is polish and coverage.
+
+| ID | Pri | Finding | Evidence | Proposed fix |
+|---|---|---|---|---|
+| KDP-01 | **P0** | Cover asset is SVG; KDP accepts only TIFF/JPEG. | Asset `dfbd85d8…` is `image/svg+xml`, 1,756 B. KDP cover spec (G200645690) requires TIFF/JPEG. Preflight still passed 8/8. | Rasterize `coverSvg` to 1600×2560 JPEG before storing; store MIME `image/jpeg`; keep SVG as source only; add preflight MIME/dimension/ratio checks. |
+| KDP-02 | **P0** | EPUB ships raw Markdown, so readers see `#`, `##`, `-`, `**` and pipe tables. | `packages/epub/src/index.ts:174-177` escapes whole paragraphs; 288 `<p>#`, 131 `<p>-`, 5 `<p>|`, 464 `**`; chapter title duplicated. | Render Markdown to XHTML (h2/h3, ul/ol, strong/em, tables); strip the leading H1 before adding the chapter heading; add raw-markdown assertions and a Kindle Previewer smoke test. |
+| KDP-03 | **P1** | KDP prepare package has no API/UI download path. | Job stores `books/:id/kdp/package.json` (2,507 B) but no `book_assets` row; `GET /publish/package` and `/kdp/package` return 404; field mapping says "storage key for asset …", not a real file. | Add authenticated `GET /api/books/:id/publish/package` streaming the storage key, or store the package as an asset/zip with EPUB and cover downloads; surface it on `/publish`. |
+| GEN-01 | **P1** | Writing ignores `chapter.targetWordCount`. | `packages/ai/src/openrouter-provider.ts:322` only says "at least 800 words"; actual 29,147 vs 16,000 (+82.2%), every chapter +53–121%. | Interpolate the chapter target into the prompt, ask for ±10–15%, validate output length after generation and retry/trim; add a regression test. |
+| GEN-02 | **P1** | Planner controls chapter count; the 8-chapter brief became 10 chapters. | `createBookSchema`/`desiredLength` has no chapter-count field; plan produced 10 targets summing to 16,000. | Persist `desiredChapterCount` (or explicitly document planner autonomy and show the count before approval); constrain plan schema/prompt. |
+| QA-01 | **P1** | QA/preflight validate existence, not artifact usability. | Preflight passed a non-KDP cover and a raw-Markdown EPUB; `validateEpub` only checks ZIP/container/OPF/nav. | Add artifact-level checks: cover MIME/dimensions, EPUB XHTML/raw-markdown/CSS lint, title page/TOC; make failures critical. |
+| FACT-01 | **P2** | `fact_checks.source_id` is always null. | 8/8 claims verified, 0/8 source IDs; handler inserts claim without `sourceIndex` mapping. | Map `claim.sourceIndex` to the retained evidence source ID on insert. |
+| COST-01 | **P2** | QA records only the fact-check AgentRun and labels it `editorial`. | QA run: `openai/gpt-5-mini`, 40,864 in / 2,355 out, $0.014926; editorial `gpt-5.4` usage absent. | Record one AgentRun per agent call inside multi-agent jobs; fix `agentType` and cost totals. |
+| QA-02 | **P2** | All quality issues have `chapter_id = null`. | 20/20 issues null although editorial returns `chapterOrdinal`. | Resolve ordinal → chapter row when inserting `quality_issues`. |
+| EDIT-01 | **P2** | Repetition/readability miss the nontechnical promise. | 10 repeat warnings; Flesch 28.8–46.8; chapters 1/2, 7/9, 10 overlap heavily. | Add a de-duplication/rewrite pass with chapter-purpose constraints and a readability target; make repetition warnings actionable. |
+| PROV-01 | **P2** | Per-artifact provenance mislabels deterministic output as `ai_generated`. | EPUB provenance method `ai_generated`/`deterministic`; cover `ai_generated` for a deterministic SVG render. | Use accurate methods (`deterministic_render`, `ai_assisted`) while keeping the book-level AI disclosure truthful. |
+| PROD-01 | **P2** | EPUB lacks front matter/title page. | ZIP contains only container/OPF/nav/10 chapters; no title or copyright page. | Add title page, copyright/rights page (and optional dedication) before chapter 1. |
+| CONTENT-01 | **P2** | Source-backed claims are unattributed. | 0 URLs / 0 citations in 29,147 words; fact-check rationales name sources, manuscript does not. | Add optional endnotes/source notes for research-backed claims; keep the no-fabrication rule. |
+| PROD-02 | **P3** | EPUB metadata is static. | `dcterms:modified` hardcoded `2000-01-01T00:00:00Z`; EPUB builder uses fixed epoch by design. | Keep deterministic bytes for tests, but inject a release timestamp in production or document the tradeoff. |
+| META-01 | **P3** | Metadata completeness/polish. | `publisherName` and `audience` null; subtitle repeats the working title and is long. | Populate publisher/audience from book settings; review subtitle/title split against KDP title rules. |
+| ANALYTICS-01 | **P3** | `agent_runs.output_units` mixes tokens and bytes. | EPUB run records 206,635 output units (bytes) and cover records SVG bytes; cost analytics cannot sum tokens. | Store unit type or separate token/byte columns. |
+| QA-03 | **P3** | QA re-runs delete prior issue history. | `delete(qualityIssues)` before insert at `packages/handlers/src/index.ts:861`. | Version QA runs or archive prior issues instead of deleting. |
+| TEST-01 | **P3** | No regression covers the real-book artifact path. | This run's P0s were invisible to 79/79 unit tests. | Add a PGlite lifecycle test that builds an EPUB/cover and asserts rendered XHTML + KDP MIME constraints. |
+
+---
+
+## Current state (2026-10-28 — first full real-book lifecycle verified)
 
 All V1 phases A—K are implemented. All suites green:
 
-- `pnpm test` — **79/79** (PGlite, no services needed; includes the 6 container
-  queue-selection drift tests and the 17 new OpenRouter provider tests)
-- `pnpm test:e2e` — 1/1 (against Neon via `DATABASE_URL`)
-- `pnpm test:browser` — 8/8
+- `pnpm test` — **79/79** (11 files; PGlite, no services needed)
+- `pnpm test:e2e` — 1/1 (last run against Neon via `DATABASE_URL`)
+- `pnpm test:browser` — 8/8 (last run)
 
-Deployed: https://kdone-uhhh2.vercel.app (deployment
-`dpl_ERzBvQTTBXTwFLpgnPtS137BjcE1`, 2026-10-20). `OPENROUTER_API_KEY` **is
-configured** in `.env.worker` and in Vercel production, so the local worker
-and the web app select the real provider. **Real LLM research is verified
-end-to-end live** (research task only — see the OpenRouter section below).
-Writing, QA and metadata also ran live for book `7c8a5446` on 2026-10-22/27.
-The cover LLM call now produces only a small structured brief; the SVG is
-rendered deterministically by the image provider (2026-10-27).
+Deployed: https://kdone-uhhh2.vercel.app (latest production deployment
+`dpl_7X2oivixVg2pfkC7SgHKmLtcoiTr`, commit `803065c2`). `OPENROUTER_API_KEY`
+**is configured** in `.env.worker` and in Vercel production, so the local
+worker and the web app select the real provider. The **first full real-book
+lifecycle is verified live** (book `b5116235…`, 16/16 jobs succeeded on
+attempt 1) — see the section above for metrics and the P0/P1 artifact
+blockers. Earlier, research alone and then writing/QA/metadata ran live for
+book `7c8a5446` on 2026-10-22/27. The cover LLM call now produces only a small
+structured brief; the SVG is rendered deterministically by the image provider
+(2026-10-27).
 
 ### Workspace UI smoke test (2026-10-27) — metadata + EPUB verified, cover blocked
 
@@ -343,13 +539,14 @@ Cumulative cost for this book: $0.08791075.
 
 | Criterion | Status |
 |---|---|
-| Lifecycle Create → KDP prepare | **Not verified** (E2E fails at research step) |
+| Lifecycle Create → KDP prepare | **Verified live** (book `b5116235…`, 2026-10-28; 30 m 26 s) |
 | Jobs survive worker restart | **Verified** (`packages/jobs` tests) |
-| Artifacts versioned, no destructive overwrite | **Verified** (unit tests + schema) |
-| Provenance on every generated output | **Implemented**, partially verified |
-| Every state transition logged | **Verified** (unit test) |
-| Critical issues block READY_FOR_REVIEW | **Verified** (unit test + preflight code) |
-| publish/start rejects artifact drift | **Implemented, NOT verified through HTTP** |
+| Artifacts versioned, no destructive overwrite | **Verified** (unit tests + schema; run produced manuscript/metadata/cover/EPUB v1) |
+| Provenance on every generated output | **Verified live** for cover + EPUB; method labels are inaccurate (P2) |
+| Every state transition logged | **Verified** (unit test + 10 live transitions) |
+| Critical issues block READY_FOR_REVIEW | **Verified** (unit test + preflight code); this run produced 0 criticals |
+| publish/start rejects artifact drift | **Implemented**; checklist gate verified live (409 when incomplete), drift path not exercised |
+| KDP-uploadable artifacts | **NOT verified — blocked** (cover SVG not KDP format; EPUB contains raw Markdown) |
 | Mock providers run everything locally | **Verified** |
 
 ## What is built
@@ -373,26 +570,26 @@ Cumulative cost for this book: $0.08791075.
 | Area | State |
 |---|---|
 | Database | Real Postgres schema/migrations. Dev needs Postgres; tests use PGlite. |
-| LLM / research | Real path selected whenever `OPENROUTER_API_KEY` is set (OpenRouterProvider + OpenRouterResearchProvider with strict structured outputs) — **verified live for research** (job `05bc63ec…`, 3 real sources / 5 findings, $0.00389525, 28 s exec). Writing/QA/metadata/cover go through the same provider + prompts with unit-test coverage only, no live run yet. Mock providers remain the fallback with no key. |
-| Storage | **Real S3/R2 driver** when `S3_*` is configured (`StorageProvider` selection in `packages/storage`, ADR-016); in-memory mock otherwise. Live EPUB download verified 2026-10-27. |
-| Queue | **Real BullMQ in prod**; in-memory in tests. |
-| Auth | Credentials + JWT for local dev. OAuth not configured. |
-| KDP submission | **Not implemented by design.** Mode A prepare only. |
-| EPUB | Real deterministic builder + structural validator. |
+| LLM / research | Real path selected whenever `OPENROUTER_API_KEY` is set (OpenRouterProvider + OpenRouterResearchProvider with strict structured outputs) — **verified live for the full lifecycle on 2026-10-28** (research, planning, 10 writing jobs, QA, metadata, cover; $0.96957725 recorded). Mock providers remain the fallback with no key. |
+| Storage | **Real S3/R2 driver** when `S3_*` is configured (`StorageProvider` selection in `packages/storage`, ADR-016); in-memory mock otherwise. Authenticated cover + EPUB download verified live; the KDP package is stored but not downloadable through the app (P1). |
+| Queue | **Real BullMQ in prod**; in-memory in tests. 16/16 live jobs succeeded on attempt 1. |
+| Auth | Credentials + JWT; fresh-account registration + real Auth.js sign-in verified against the live deployment. OAuth not configured. |
+| KDP submission | **Not implemented by design.** Mode A prepare only; package `PREPARED`, `externalReference` null. |
+| EPUB | Real deterministic builder + structural validator. **The builder does not render Markdown** and the validator does not check reader-facing content (P0). |
 
 ## Current phase
 
-**Superseded by "Current state" at the top of this file.** The lifecycle is
-implemented and all suites pass; the remaining gap is the container/queue
-blocker plus the live end-to-end proof of the queue path.
+**Superseded by "First real-book validation" at the top of this file.** The
+lifecycle is implemented and verified live. The remaining V1 blockers are the
+artifact-quality P0s (KDP cover MIME, EPUB Markdown rendering), not the queue.
 
 ## Test suites
 
 | Command | Needs | Result |
 |---|---|---|
-| pnpm test | nothing (PGlite) | 74/74 |
-| pnpm test:e2e | DATABASE_URL (real Postgres) | 1/1 |
-| pnpm test:browser | DATABASE_URL + Chromium cache | 8/8 |
+| pnpm test | nothing (PGlite) | 79/79 (11 files, 2026-10-28) |
+| pnpm test:e2e | DATABASE_URL (real Postgres) | 1/1 (last known) |
+| pnpm test:browser | DATABASE_URL + Chromium cache | 8/8 (last known) |
 
 ## Known blocking issue (RESOLVED — historical)
 
@@ -406,18 +603,19 @@ sequential statement in `persistResearch` stalled forever. Batching the sources
 loop moved the stall forward by exactly one statement, so the loop was not the
 cause — PGlite's single-connection WASM model cannot drain sequential statements
 the way a job handler issues them. Unit tests keep using PGlite and still pass
-(74/74); they were not changed.
+(79/79); they were not changed.
 
 The E2E now applies the **same** drizzle-kit generated migrations production
 uses, and creates a unique user per run so repeated runs never collide. Nothing
 is ever deleted.
 
-**Awaiting a Neon (or local Postgres) connection string to run it.**
+A Neon connection string was later supplied; the suite ran **1/1** (last
+known).
 
-## Open items before V1 can be declared complete
+## Open items before V1 can be declared complete (reconciled 2026-10-28)
 
-1. **Run `pnpm test:e2e` against real Postgres** and fix whatever surfaces next
-   (blocker).
+1. **RESOLVED — `pnpm test:e2e` ran against real Postgres (Neon)** and passed
+   1/1 (last known).
 2. **Tighten E2E step 11** — still reaches `READY_FOR_REVIEW` via a direct DB
    write. Doing it through the real path exposes a genuine state-machine gap:
    once a book is `USER_APPROVED`, the only permitted events are `PUBLISH_START`
@@ -435,17 +633,13 @@ is ever deleted.
    shared-store decision: an in-process limiter is incorrect across multiple web
    instances, so a store must be chosen and documented (Redis is the obvious
    candidate, already required for BullMQ). No ADR written yet.
-5. **Cover generation cannot complete on the real provider (blocker).**
-   `coverPrompt` asks for a complete 1600×2560 SVG inside one JSON response
-   while the cover task is capped at 2000 output tokens, so the provider
-   returns `finish_reason=length` and the job raises `LLMTruncatedError`.
-   Needs a product decision: raise the cover cap, split the brief from the SVG,
-   or render the deterministic template in code.
-6. **BullMQ retries never execute.** `enqueue` adds with the durable `jobId`
-   and `removeOnComplete: false`; re-adding after a retryable failure is
-   deduped, so jobs stay `RETRYING` until manual intervention. Fix belongs in
-   `packages/jobs` (unique delivery key per attempt or `removeOnComplete` for
-   retries), with a regression test.
+5. **RESOLVED — cover generation no longer asks the LLM for SVG.** The
+   provider returns a small structured brief and code renders the 1600×2560
+   SVG deterministically. Superseded by KDP-01 in the top section: the cover
+   is SVG and KDP accepts only TIFF/JPEG.
+6. **RESOLVED — BullMQ retries now execute.** Delivery ids are
+   `<durableJobId>:attempt:<n>`, and regression tests cover retry-to-FAILED
+   with the error fields recorded.
 7. **Settings PATCH endpoints** — `GET /api/settings/providers` and
    `GET /api/settings/publishing` are implemented; the `PATCH` variants from
    API.md section 13 are not.
@@ -475,8 +669,9 @@ in-process).
 ## How to run tests
 
 ```bash
-pnpm test         # 74 unit/integration tests, PGlite only, no services needed
-pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
+pnpm test         # 79 unit/integration tests, PGlite only, no services needed
+pnpm test:e2e     # 1/1 last known against real Postgres (Neon)
+pnpm test:browser # 8/8 last known
 ```
 
 ## Decisions taken without asking
@@ -505,9 +700,10 @@ pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
 4. **`x-kdone-user-id` must be deleted** once the HTTP E2E authenticates via
    Auth.js. It remains as the E2E harness and is hard-disabled when
    `NODE_ENV === "production"`.
-5. **First real-book run never performed.** All agents run against mock
-   providers, so research/writing/editorial quality is unproven. This is the
-   largest remaining risk to KDone being useful.
+5. **RESOLVED — first real-book run performed 2026-10-28.** Book
+   `b5116235-97b6-4927-9269-34175220f4db` completed the full lifecycle with
+   real providers; artifact-quality P0s were found (see the top section). This
+   item is retained only as history.
 6. **Replace the leftover `WX< N` debug `console.error` lines** in
    `packages/jobs/src/worker.ts` with structured per-job lifecycle logs
    (see "Known log noise" below).
@@ -526,15 +722,13 @@ pnpm test:e2e     # E2E smoke test - CURRENTLY FAILING at step 2
 ## Deployment status (2026 round)
 
 - **Deployed URL:** https://kdone-uhhh2.vercel.app (Vercel project `uhhh2/kdone`)
-- **Latest production deployment:** `dpl_ERzBvQTTBXTwFLpgnPtS137BjcE1`
-  (2026-10-20) — adds the OpenRouter provider with
-  `OPENROUTER_API_KEY` set in production (real provider active). This
-  deployment's live research job verified the real-LLM path end-to-end (see
-  "Current state"). Earlier: `dpl_8GJrVNKprSQiPZXNgzPyUr4j6SGt` (2026-10-20,
-  provider code without the key) and `dpl_8AxABh3KApt6V98W3BvRQky8LiKV`
-  (2026-10-19) contained the container `selectQueue()` fix, the handler
-  extraction, `prepare: false` standardization and the `findStaleRunning`
-  Date-binding fix; queue path verified end-to-end.
+- **Latest production deployment:** `dpl_7X2oivixVg2pfkC7SgHKmLtcoiTr`
+  (commit `803065c2fbd26beb3d9fdc625df15a1088644d6f`, 2026-10-27/28) — the
+  build used for the first full real-book validation. Earlier:
+  `dpl_ERzBvQTTBXTwFLpgnPtS137BjcE1` (2026-10-20, OpenRouter provider),
+  `dpl_8GJrVNKprSQiPZXNgzPyUr4j6SGt` (2026-10-20, provider code without the
+  key) and `dpl_8AxABh3KApt6V98W3BvRQky8LiKV` (2026-10-19, container
+  `selectQueue()` fix + handler extraction).
   **Deploy must be run from the repo root** — a fresh link from `apps/web`
   uploads only that directory (no lockfile) and Vercel then installs with
   npm, failing on `workspace:*` (EUNSUPPORTEDPROTOCOL).
