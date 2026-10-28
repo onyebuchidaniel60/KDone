@@ -1326,25 +1326,49 @@ export function countWords(text: string): number {
 
 /**
  * Keeps a chapter close to its planned size. When the draft exceeds the target
- * by more than 15%, whole paragraphs are retained in order until the target is
- * reached; paragraphs are never cut mid-sentence. A single paragraph larger
- * than the target is kept as-is because there is no safe cut point.
+ * by more than 15%, whole blocks are retained in order up to the ceiling and
+ * the cut is then walked back until it no longer dangles: never end on a
+ * heading, never leave a "…:" lead-in whose list was dropped, and never split a
+ * list or table. Paragraphs are never cut mid-sentence. A single block larger
+ * than the budget is kept as-is because there is no safe cut point.
  */
 export function truncateToTarget(content: string, targetWordCount: number, tolerance = 0.15): string {
   if (targetWordCount <= 0) return content;
-  if (countWords(content) <= Math.floor(targetWordCount * (1 + tolerance))) return content;
+  const ceiling = Math.floor(targetWordCount * (1 + tolerance));
+  if (countWords(content) <= ceiling) return content;
 
-  const paragraphs = content.split(/\n{2,}/);
-  const kept: string[] = [];
-  let words = 0;
-  for (const paragraph of paragraphs) {
-    const paragraphWords = countWords(paragraph);
-    if (kept.length > 0 && words + paragraphWords > targetWordCount) break;
-    kept.push(paragraph);
-    words += paragraphWords;
-    if (words >= targetWordCount) break;
+  const blocks = content.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
+  if (blocks.length <= 1) return blocks[0] ?? content;
+
+  const isHeading = (b: string) => /^#{1,6}\s/.test(b);
+  const isList = (b: string) => /^(?:[-*+]|\d+[.)])\s/.test(b);
+  const isTable = (b: string) => /^\|/.test(b);
+  const endsWithLeadIn = (b: string) => /[:：]\s*$/.test(b);
+
+  const words = blocks.map(countWords);
+  let cut = 0;
+  let total = 0;
+  for (let i = 0; i < blocks.length; i += 1) {
+    if (total + words[i]! > ceiling) break;
+    total += words[i]!;
+    cut = i + 1;
   }
-  return kept.join("\n\n").trim();
+
+  while (cut > 0) {
+    const last = blocks[cut - 1]!;
+    const next = blocks[cut];
+    const dangling =
+      isHeading(last) ||
+      (endsWithLeadIn(last) && next !== undefined && (isList(next) || isTable(next))) ||
+      (next !== undefined && isList(last) && isList(next)) ||
+      (next !== undefined && isTable(last) && isTable(next));
+    if (!dangling) break;
+    cut -= 1;
+  }
+
+  // A chapter must never become empty; keep the first block as the floor.
+  if (cut === 0) cut = 1;
+  return blocks.slice(0, cut).join("\n\n").trim();
 }
 
 function mapMetadata(md: MetadataOutput) {

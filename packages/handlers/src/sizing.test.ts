@@ -28,4 +28,38 @@ describe("chapter sizing guardrail", () => {
     const result = truncateToTarget(draft, 2000);
     expect(result).toBe(draft);
   });
+
+  it("does not leave a section heading as the final line", () => {
+    const body = paragraph(1, 1900);
+    const draft = [body, "## Next Section", paragraph(2, 500)].join("\n\n");
+    const result = truncateToTarget(draft, 2000);
+
+    expect(result).toBe(body);
+    expect(result.endsWith("p1w1900.")).toBe(true);
+    expect(result).not.toContain("Next Section");
+  });
+
+  it("does not leave a lead-in whose list was dropped", () => {
+    const body = paragraph(1, 2290);
+    const leadIn = "Your response plan should name who will:";
+    const list = ["- who calls", "- who decides", "- who reviews", "- who speaks to customers"].join("\n");
+    const draft = [body, leadIn, list, paragraph(9, 400)].join("\n\n");
+    const result = truncateToTarget(draft, 2000);
+
+    expect(result).toBe(body);
+    expect(result).not.toContain("who will:");
+    expect(result).not.toContain("who calls");
+  });
+
+  it("does not split a list across the cut", () => {
+    const body = paragraph(1, 2250);
+    const first = Array.from({ length: 15 }, (_, i) => `- first${i + 1}`).join("\n");
+    const second = Array.from({ length: 15 }, (_, i) => `- second${i + 1}`).join("\n");
+    const draft = [body, first, second].join("\n\n");
+    const result = truncateToTarget(draft, 2000);
+
+    expect(result).toBe(body);
+    expect(result).not.toContain("- first1");
+    expect(result).not.toContain("- second1");
+  });
 });
