@@ -265,6 +265,16 @@ editorial AgentRun cost.
   `b5116235-97b6-4927-9269-34175220f4db` remain `USER_APPROVED`;
   `ddc07ff1-b893-462e-9a9d-851483a16149` remains the discarded `EDITING` run.
 
+### Deployment record
+
+- Production deployment `dpl_HVcyQu85bbiXC93GMPDXNHi1mi2W`,
+  `https://kdone-4rprd7s15-uhhh2.vercel.app`, status **READY**, built from HEAD
+  `98b9994` (runtime code `e0bc85b` plus docs). Aliases `kdone.vercel.app`
+  and `kdone-uhhh2.vercel.app` both return HTTP 200.
+- This verifies the `sharp` runtime fix and the EPUB/title/cover code deploy
+  cleanly. It does **not** re-verify job delivery through the deployed queue;
+  that remains blocked by the Upstash request cap noted above.
+
 ## Iteration 1 baseline — first real-book validation through the live deployment (2026-10-28)
 
 **Verdict: lifecycle GO; publishable artifacts NO-GO.** The complete lifecycle
